@@ -20,7 +20,7 @@ Professional cryptocurrency futures trading signal screener for MEXC exchange. S
 ## Install
 
 ```bash
-cd crypto_futures_screener
+cd ultimate-screener
 python -m venv .venv
 .venv\Scripts\activate   # Windows
 # source .venv/bin/activate  # Linux/Mac
@@ -75,7 +75,7 @@ See `config/.env.example`. Key variables:
 ## Project structure
 
 ```
-crypto_futures_screener/
+ultimate-screener/
 ├── src/
 │   ├── main.py           # Orchestrator and scheduler
 │   ├── config.py          # Settings from .env

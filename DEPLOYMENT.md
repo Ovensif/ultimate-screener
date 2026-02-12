@@ -4,13 +4,13 @@ Ways to run the screener continuously or on a schedule.
 
 ## Linux: systemd service
 
-1. Copy the project to the server (e.g. `/opt/crypto_futures_screener`).
+1. Copy the project to the server (e.g. `/opt/ultimate-screener`).
 2. Create `.env` from `config/.env.example` and set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`.
 3. Install dependencies: `pip install -r requirements.txt` (prefer a venv).
 4. Run the install script (from project root):
 
    ```bash
-   bash deployment/install_service.sh /opt/crypto_futures_screener
+   bash deployment/install_service.sh /opt/ultimate-screener
    ```
 
    This copies the systemd unit (with your path), enables and starts the service.
@@ -40,7 +40,7 @@ If you prefer cron instead of a long-running process:
    ```bash
    crontab -e
    # Paste the line, e.g.:
-   */5 * * * * cd /opt/crypto_futures_screener && python3 src/main.py --once >> logs/cron.log 2>&1
+   */5 * * * * cd /opt/ultimate-screener && python3 src/main.py --once >> logs/cron.log 2>&1
    ```
 
 Each run does one watchlist refresh (if needed) and one full scan, then exits.
@@ -54,7 +54,7 @@ Each run does one watchlist refresh (if needed) and one full scan, then exits.
 2. For scheduled runs:
    - Open Task Scheduler.
    - Create a new task; trigger: e.g. every 5 minutes or at startup.
-   - Action: Start a program → Program: `python` or full path to `python.exe`; Arguments: `src\main.py --once`; Start in: project folder (e.g. `C:\...\crypto_futures_screener`).
+   - Action: Start a program → Program: `python` or full path to `python.exe`; Arguments: `src\main.py --once`; Start in: project folder (e.g. `C:\...\ultimate-screener`).
    - If you use a venv, set the program to the venv’s `python.exe` and Start in to the project root.
 
 ## Logs and data

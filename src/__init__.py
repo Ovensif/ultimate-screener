@@ -1,1 +1,1 @@
-# crypto_futures_screener
+# ultimate-screener
