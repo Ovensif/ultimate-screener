@@ -15,6 +15,11 @@ logger = logging.getLogger(__name__)
 
 # Cache TTL in seconds (1 min for 4h/1d to avoid duplicate calls in same scan)
 CACHE_TTL = 60
+# Min seconds between any MEXC API call to avoid 510 "too frequent"
+REQUEST_DELAY = 0.4
+# Retries and backoff for rate limit (MEXC 510)
+RATE_LIMIT_RETRIES = 5
+RATE_LIMIT_BASE_WAIT = 5
 
 
 def _get_exchange():
@@ -27,8 +32,20 @@ def _get_exchange():
     return ccxt.mexc(opts)
 
 
-def _retry(fn, *args, max_retries: int = 3, **kwargs) -> Any:
-    """Run fn with exponential backoff; respect 429/Retry-After."""
+def _is_rate_limit_error(e: Exception) -> bool:
+    """MEXC returns 510 'Requests are too frequent' (often as ExchangeError)."""
+    msg = str(e).lower()
+    if "510" in msg or "too frequent" in msg or "rate" in msg:
+        return True
+    if hasattr(e, "response") and getattr(e.response, "status_code", None) == 429:
+        return True
+    if getattr(e, "httpCode", None) == 429:
+        return True
+    return False
+
+
+def _retry(fn, *args, max_retries: int = RATE_LIMIT_RETRIES, **kwargs) -> Any:
+    """Run fn with exponential backoff; longer waits for MEXC 510 / rate limit."""
     last_exc = None
     for attempt in range(max_retries):
         try:
@@ -37,15 +54,13 @@ def _retry(fn, *args, max_retries: int = 3, **kwargs) -> Any:
             last_exc = e
             if attempt == max_retries - 1:
                 raise
-            wait = 2 ** attempt
-            if hasattr(e, "response") and getattr(e.response, "status_code", None) == 429:
-                retry_after = getattr(e.response, "headers", {}).get("Retry-After")
-                if retry_after:
-                    try:
-                        wait = int(retry_after)
-                    except ValueError:
-                        pass
-            logger.warning("Retry in %ss after %s: %s", wait, type(e).__name__, e)
+            wait = RATE_LIMIT_BASE_WAIT * (2 ** attempt)
+            if _is_rate_limit_error(e):
+                # MEXC 510: use longer backoff (5s, 10s, 20s, 40s, 80s)
+                pass
+            else:
+                wait = min(wait, 2 ** attempt)
+            logger.warning("Retry in %ss after %s: %s", wait, type(e).__name__, str(e)[:120])
             time.sleep(wait)
     raise last_exc
 
@@ -58,6 +73,14 @@ class MEXCDataFetcher:
         self._cache_dir.mkdir(parents=True, exist_ok=True)
         self._cache_ttl = cache_ttl
         self._exchange = None
+        self._last_request_time: float = 0
+
+    def _throttle(self) -> None:
+        """Enforce min delay between API calls to avoid MEXC 510."""
+        elapsed = time.time() - self._last_request_time
+        if elapsed < REQUEST_DELAY:
+            time.sleep(REQUEST_DELAY - elapsed)
+        self._last_request_time = time.time()
 
     @property
     def exchange(self):
@@ -104,6 +127,7 @@ class MEXCDataFetcher:
         if cached is not None and len(cached) >= limit:
             return cached.tail(limit).copy()
 
+        self._throttle()
         try:
             ohlcv = _retry(
                 self.exchange.fetch_ohlcv,
@@ -138,6 +162,7 @@ class MEXCDataFetcher:
 
     def fetch_ticker(self, symbol: str) -> Optional[dict]:
         """Fetch 24h ticker (volume, last, bid, ask). Returns None on error."""
+        self._throttle()
         try:
             t = _retry(self.exchange.fetch_ticker, symbol)
             if t is None:
@@ -156,6 +181,7 @@ class MEXCDataFetcher:
 
     def fetch_futures_markets(self) -> list[dict]:
         """Fetch all USDT perpetual futures markets."""
+        self._throttle()
         try:
             markets = _retry(self.exchange.fetch_markets)
         except Exception as e:

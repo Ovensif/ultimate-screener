@@ -35,10 +35,13 @@
 
 ## MEXC / API
 
-**429 Too Many Requests**
+**510 "Requests are too frequent" / 429 Too Many Requests**
 
-- MEXC is rate-limiting. The code retries with backoff. Reduce scan frequency (`SCAN_INTERVAL`) or `MAX_COINS` so you make fewer requests per minute.
-- Don’t run multiple instances of the screener against the same exchange at the same time.
+- MEXC rate-limits when too many requests are sent in a short time. The screener now:
+  - Waits **0.4 s** between each API call (throttle).
+  - On 510/429, **retries with longer backoff** (5s, 10s, 20s, …) up to 5 times.
+- If you still see it often: increase `SCAN_INTERVAL` (e.g. 600), lower `MAX_COINS` (e.g. 15), or increase `WATCHLIST_REFRESH` so the watchlist is updated less often.
+- Don’t run multiple instances of the screener against the same exchange.
 
 **No markets or wrong symbols**
 
