@@ -1,5 +1,6 @@
 """
 Orchestrator: scheduler, watchlist refresh, scan loop, Telegram alerts, signal logging.
+Beast-mode: BTC+ETH dual filter, dynamic cooldown, daily signal cap, scan stats.
 """
 import argparse
 import json
@@ -7,6 +8,7 @@ import logging
 import signal as sig
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 # Run from project root (parent of src)
@@ -38,14 +40,17 @@ def _setup_logging() -> None:
     logging.root.addHandler(console)
 
 
-COOLDOWN_SEC = 4 * 3600  # 4 hours
 BTC_SYMBOL = "BTC/USDT:USDT"
+ETH_SYMBOL = "ETH/USDT:USDT"
 SIGNALS_FILE = config.DATA_DIR / "signals.json"
 
 # Module-level state for scheduler jobs
 _fetcher: MEXCDataFetcher = None
 _watchlist_manager: WatchlistManager = None
-_last_signal_time: dict = {}
+_last_signal_time: dict = {}          # symbol -> timestamp
+_last_signal_setup: dict = {}         # symbol -> setup_type
+_daily_signal_count: int = 0
+_daily_signal_date: str = ""          # YYYY-MM-DD to reset daily counter
 _shutdown = False
 
 
@@ -69,10 +74,10 @@ def _append_signal_log(record: dict) -> None:
         logging.getLogger(__name__).warning("Could not write signals.json: %s", e)
 
 
-def _btc_1h_change() -> float:
-    """Return BTC 1h percentage change or 0 if unavailable."""
+def _pct_change(symbol: str, timeframe: str, bars: int = 5) -> float:
+    """Return percentage change over the last completed bar, or 0."""
     try:
-        df = _fetcher.fetch_ohlcv(BTC_SYMBOL, "1h", 5)
+        df = _fetcher.fetch_ohlcv(symbol, timeframe, bars)
         if df is None or len(df) < 2:
             return 0.0
         prev = df["close"].iloc[-2]
@@ -84,21 +89,100 @@ def _btc_1h_change() -> float:
     return 0.0
 
 
+def _check_market_health() -> dict:
+    """
+    Beast-mode: check BTC (1H + 4H) and ETH (4H).
+    Returns dict with flags.
+    """
+    btc_1h = _pct_change(BTC_SYMBOL, "1h")
+    btc_4h = _pct_change(BTC_SYMBOL, "4h")
+    eth_4h = _pct_change(ETH_SYMBOL, "4h")
+
+    btc_dump_1h = getattr(config, "BTC_DUMP_1H", -5.0)
+    btc_dump_4h = getattr(config, "BTC_DUMP_4H", -3.0)
+    eth_dump_4h = getattr(config, "ETH_DUMP_4H", -3.0)
+
+    full_suppress = False
+    partial_suppress = False
+
+    # Full suppression: BTC 4H < -3% OR BTC 1H < -5%
+    if btc_4h < btc_dump_4h or btc_1h < btc_dump_1h:
+        full_suppress = True
+    # Full suppression: both BTC and ETH dumping on 4H
+    if btc_4h < btc_dump_4h and eth_4h < eth_dump_4h:
+        full_suppress = True
+    # Partial: BTC 4H < -2% (only allow HIGH + R:R >= 3)
+    if btc_4h < (btc_dump_4h + 1.0):  # e.g. -2% if threshold is -3%
+        partial_suppress = True
+
+    return {
+        "btc_1h": btc_1h,
+        "btc_4h": btc_4h,
+        "eth_4h": eth_4h,
+        "full_suppress": full_suppress,
+        "partial_suppress": partial_suppress,
+    }
+
+
+def _dynamic_cooldown(symbol: str, setup_type: str) -> bool:
+    """
+    Beast-mode dynamic cooldown:
+    - 6h if same setup type on same coin
+    - 4h for different confidence
+    - 2h if different setup type
+    Returns True if cooldown is active (should skip).
+    """
+    now = time.time()
+    last_time = _last_signal_time.get(symbol, 0)
+    last_setup = _last_signal_setup.get(symbol, "")
+
+    if last_time == 0:
+        return False
+
+    elapsed = now - last_time
+
+    if setup_type == last_setup:
+        # Same setup type: 6 hour cooldown
+        return elapsed < 6 * 3600
+    else:
+        # Different setup type: 2 hour cooldown
+        return elapsed < 2 * 3600
+
+
 def _run_scan() -> None:
-    global _last_signal_time
+    global _last_signal_time, _last_signal_setup, _daily_signal_count, _daily_signal_date
     logger = logging.getLogger(__name__)
+
+    # Reset daily counter if new day
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    if today != _daily_signal_date:
+        _daily_signal_count = 0
+        _daily_signal_date = today
+
     watchlist = _watchlist_manager.get_watchlist()
     if not watchlist:
         logger.info("Watchlist empty, skipping scan")
         return
 
-    btc_change = _btc_1h_change()
-    btc_dump = btc_change < -5.0
-    if btc_dump:
-        logger.info("BTC 1h change %.2f%%, suppressing new signals", btc_change)
+    # Beast-mode: market health check (BTC + ETH)
+    health = _check_market_health()
+    if health["full_suppress"]:
+        logger.info(
+            "Market dump detected (BTC 1H=%.2f%%, BTC 4H=%.2f%%, ETH 4H=%.2f%%), suppressing ALL signals",
+            health["btc_1h"], health["btc_4h"], health["eth_4h"],
+        )
+        return
+
+    max_daily = getattr(config, "MAX_SIGNALS_PER_DAY", 8)
+    scan_found = 0
+    scan_sent = 0
 
     for symbol in watchlist:
         if _shutdown:
+            break
+        # Beast-mode: daily cap
+        if _daily_signal_count >= max_daily:
+            logger.info("Daily signal cap (%d) reached, stopping scan", max_daily)
             break
         try:
             df_1d = _fetcher.fetch_ohlcv(symbol, "1d", 200)
@@ -111,31 +195,49 @@ def _run_scan() -> None:
                 continue
             signals = generate_signals(symbol, a_1d, a_4h)
             for s in signals:
-                if btc_dump and s.confidence != "HIGH":
+                scan_found += 1
+                # Beast-mode: partial suppress -- only HIGH + R:R >= 3
+                if health["partial_suppress"]:
+                    if s.confidence != "HIGH" or s.rr_ratio < 3.0:
+                        continue
+                # Beast-mode: dynamic cooldown
+                if _dynamic_cooldown(symbol, s.setup_type):
+                    logger.debug("Skip signal %s %s: cooldown", symbol, s.setup_type)
                     continue
-                now = time.time()
-                if _last_signal_time.get(symbol, 0) + COOLDOWN_SEC > now:
-                    logger.debug("Skip signal %s: cooldown", symbol)
-                    continue
+                # Daily cap check
+                if _daily_signal_count >= max_daily:
+                    break
                 risk_result = calculate(
                     (s.entry_zone[0] + s.entry_zone[1]) / 2,
                     s.stop,
                     s.side,
+                    confidence=s.confidence,
+                    atr_pct=a_4h.atr_pct,
                 )
                 ok = send_signal(s, risk_result)
                 if ok:
-                    _last_signal_time[symbol] = now
+                    _last_signal_time[symbol] = time.time()
+                    _last_signal_setup[symbol] = s.setup_type
+                    _daily_signal_count += 1
+                    scan_sent += 1
                     _append_signal_log({
                         "timestamp": s.timestamp,
                         "symbol": s.symbol,
                         "side": s.side,
                         "setup": s.setup_type,
                         "confidence": s.confidence,
+                        "rr_ratio": round(s.rr_ratio, 2),
+                        "confluence_count": len(s.confluence_list),
                         "outcome": None,
                     })
-                    logger.info("Signal sent: %s %s %s", s.symbol, s.side, s.setup_type)
+                    logger.info("Signal sent: %s %s %s (conf=%s, R:R=%.1f, %d confluence)",
+                                s.symbol, s.side, s.setup_type, s.confidence, s.rr_ratio, len(s.confluence_list))
         except Exception as e:
             logger.exception("Scan error for %s: %s", symbol, e)
+
+    # Beast-mode: scan stats logging
+    logger.info("Scan complete: %d coins scanned, %d setups found, %d signals sent (daily total: %d/%d)",
+                len(watchlist), scan_found, scan_sent, _daily_signal_count, max_daily)
 
 
 def _refresh_watchlist() -> None:
