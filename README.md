@@ -36,8 +36,12 @@ copy config\.env.example .env
 
 ## Run
 
-From project root (`crypto_futures_screener`):
+From project root:
 
+```bash
+python3 main.py
+```
+or
 ```bash
 python src/main.py
 ```
@@ -47,8 +51,9 @@ You should receive a Telegram message: "Scanner started, monitoring N coins". Si
 One-shot (single scan then exit, e.g. for cron):
 
 ```bash
-python src/main.py --once
+python3 main.py --once
 ```
+(or `python src/main.py --once`)
 
 ## Configuration
 

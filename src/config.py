@@ -5,7 +5,15 @@ All settings for the MEXC futures signal screener.
 import os
 from pathlib import Path
 
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    raise ImportError(
+        "Missing dependency: python-dotenv. Install with:\n"
+        "  pip install -r requirements.txt\n"
+        "or: pip install python-dotenv\n"
+        "If using systemd, ensure the same Python (or venv) that has these packages is used in ExecStart."
+    ) from None
 
 # Project root: parent of src/
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -34,7 +42,7 @@ def _float(key: str, default: float) -> float:
     except ValueError:
         return default
 
-SCAN_INTERVAL = _int("SCAN_INTERVAL", 300)
+SCAN_INTERVAL = _int("SCAN_INTERVAL", 600)
 WATCHLIST_REFRESH = _int("WATCHLIST_REFRESH", 3600)
 MIN_VOLUME = _int("MIN_VOLUME", 100_000_000)
 MAX_COINS = _int("MAX_COINS", 20)

@@ -1,5 +1,23 @@
 # FAQ and troubleshooting
 
+## Installation / dependencies
+
+**`ModuleNotFoundError: No module named 'dotenv'` (or other missing module)**
+
+- The app needs its dependencies installed in the **same Python** that runs the script.
+- On your VPS, from the project root run:
+  ```bash
+  cd /root/bot/ultimate-screener
+  pip install -r requirements.txt
+  ```
+  Or install the missing package directly: `pip install python-dotenv`
+- If you use **systemd**, it runs `/usr/bin/python3` by default. Either:
+  - Install dependencies for that Python: `sudo pip3 install -r requirements.txt`, or
+  - Use a venv: create one with `python3 -m venv .venv`, then `source .venv/bin/activate` and `pip install -r requirements.txt`, and in the systemd unit set:
+    `ExecStart=/root/bot/ultimate-screener/.venv/bin/python -u src/main.py`
+
+---
+
 ## Telegram
 
 **I don’t receive any messages.**
