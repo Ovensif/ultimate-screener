@@ -1,70 +1,142 @@
-# Deployment – Run 24/7
+# Deploy the screener on a VPS (step by step)
 
-Ways to run the screener continuously or on a schedule.
+Follow these steps in order. Copy and paste the commands. If your project is not in `/opt/ultimate-screener`, replace that path with your real path everywhere.
 
-## Linux: systemd service
+---
 
-1. Copy the project to the server (e.g. `/opt/ultimate-screener`).
-2. Create `.env` from `config/.env.example` and set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`.
-3. Install dependencies for system Python: `pip3 install -r requirements.txt` or `sudo python3 -m pip install -r requirements.txt`.
-4. Run the install script (from project root):
+## Step 1: Put the project on the server
+
+- If you use **git**: clone the repo into `/opt` (or any folder you like).
+- If you use **upload**: upload the whole project folder to the server (e.g. `/opt/ultimate-screener`).
+
+Example with git (run on the server):
+
+```bash
+sudo mkdir -p /opt
+sudo git clone https://github.com/YOUR_USER/ultimate-screener.git /opt/ultimate-screener
+```
+
+(Replace the URL with your real repo. If you don’t use git, skip this and use your own path.)
+
+---
+
+## Step 2: Go into the project folder
+
+Type this and press Enter:
+
+```bash
+cd /opt/ultimate-screener
+```
+
+You must be inside this folder for the next steps. If your project is somewhere else (e.g. `/root/bot/ultimate-screener`), use that path instead of `/opt/ultimate-screener`.
+
+---
+
+## Step 3: Create the `.env` file
+
+The bot needs your Telegram token and chat ID. Do this:
+
+1. Copy the example file:
 
    ```bash
-   bash deployment/install_service.sh /opt/ultimate-screener
+   cp config/.env.example .env
    ```
 
-5. Check logs:
+2. Open the file to edit it:
 
    ```bash
-   sudo journalctl -u mexc-screener -f
+   nano .env
    ```
 
-6. Restart/stop:
+3. Fill in these two lines (get the values from Telegram/BotFather):
 
-   ```bash
-   sudo systemctl restart mexc-screener
-   sudo systemctl stop mexc-screener
-   ```
+   - `TELEGRAM_BOT_TOKEN=your_bot_token_here`
+   - `TELEGRAM_CHAT_ID=your_chat_id_here`
 
-The unit file uses `Restart=always` and `RestartSec=10` so the process is restarted on failure.
+4. Save and exit: press **Ctrl+O**, then **Enter**, then **Ctrl+X**.
 
-## Linux/Unix: cron (one-shot every 5 min)
+---
 
-If you prefer cron instead of a long-running process:
+## Step 4: Run the install script
 
-1. Edit `deployment/cron_example.txt` and set the real project path.
-2. Add to crontab:
+This script will:
 
-   ```bash
-   crontab -e
-   # Paste the line, e.g.:
-   */5 * * * * cd /opt/ultimate-screener && python3 src/main.py --once >> logs/cron.log 2>&1
-   ```
+- Create a Python “venv” (virtual environment) in the project
+- Install all required packages into that venv
+- Install the systemd service so the screener runs 24/7
 
-Each run does one watchlist refresh (if needed) and one full scan, then exits.
+Run this **one** command (you may be asked for your password):
 
-## Windows: Task Scheduler
+```bash
+bash deployment/install_service.sh /opt/ultimate-screener
+```
 
-1. Use the batch files in `deployment/`:
-   - **run_screener.bat** – runs `python src/main.py` (continuous; keep the window open or run in background).
-   - **run_once.bat** – runs `python src/main.py --once` (single scan).
+- If your project is in another folder, use that path instead of `/opt/ultimate-screener`.
+- If you see “Create .env…” and the script exits, go back to Step 3 and make sure `.env` exists and has the two values set.
 
-2. For scheduled runs:
-   - Open Task Scheduler.
-   - Create a new task; trigger: e.g. every 5 minutes or at startup.
-   - Action: Start a program → Program: `python` or full path to `python.exe`; Arguments: `src\main.py --once`; Start in: project folder (e.g. `C:\...\ultimate-screener`).
-   - If you use a venv, set the program to the venv’s `python.exe` and Start in to the project root.
+When it finishes, the service is installed and should already be running.
+
+---
+
+## Step 5: Check that it’s running
+
+See the last lines of the service log:
+
+```bash
+sudo journalctl -u mexc-screener -n 30
+```
+
+You should see Python starting and no big red error. To watch the log live (updates as it runs):
+
+```bash
+sudo journalctl -u mexc-screener -f
+```
+
+Press **Ctrl+C** to stop watching.
+
+---
+
+## Step 6: Useful commands (after it’s installed)
+
+- **Start the service** (if it’s stopped):  
+  `sudo systemctl start mexc-screener`
+
+- **Stop the service**:  
+  `sudo systemctl stop mexc-screener`
+
+- **Restart the service** (e.g. after you change `.env` or code):  
+  `sudo systemctl restart mexc-screener`
+
+- **See status** (running or failed):  
+  `sudo systemctl status mexc-screener`
+
+- **Watch logs live**:  
+  `sudo journalctl -u mexc-screener -f`
+
+---
+
+## If something goes wrong
+
+1. **Service keeps stopping (exit code 1)**  
+   Run:  
+   `sudo journalctl -u mexc-screener -n 50`  
+   Read the last lines; they usually say what failed (e.g. missing `.env`, wrong path).
+
+2. **“No module named 'dotenv'” or similar**  
+   The service must use the project’s venv. Re-run the install script so it recreates/updates the venv and service:  
+   `cd /opt/ultimate-screener`  
+   `bash deployment/install_service.sh /opt/ultimate-screener`
+
+3. **You changed the project path**  
+   Run the install script again with the **new** path:  
+   `bash deployment/install_service.sh /NEW/PATH/ultimate-screener`
+
+---
 
 ## Logs and data
 
-- **Logs**: `logs/screener.log` (rotating, 2 MB × 3 backups). Ensure `logs/` exists (created automatically on first run).
-- **Signals**: `data/signals.json` – every sent signal is appended for stats.
-- **Cache**: `data/cache/` – OHLCV cache to reduce API calls.
+- **App log file**: `logs/screener.log` (in the project folder).
+- **Signals log**: `data/signals.json`.
+- **Cache**: `data/cache/`.
 
-## Health check
-
-There is no built-in HTTP health endpoint. You can:
-
-- Monitor `logs/screener.log` for errors.
-- Check that `data/signals.json` is updated when signals are sent.
-- Optionally write a “last scan” timestamp to a file in `data/` and have an external monitor read it.
+The service is set to restart automatically if it crashes (`Restart=always`).
