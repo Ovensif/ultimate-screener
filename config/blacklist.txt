@@ -1,0 +1,2 @@
+# One symbol per line (base asset only, e.g. BADCOIN)
+# Lines starting with # are ignored
