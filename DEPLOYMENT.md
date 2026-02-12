@@ -6,21 +6,20 @@ Ways to run the screener continuously or on a schedule.
 
 1. Copy the project to the server (e.g. `/opt/ultimate-screener`).
 2. Create `.env` from `config/.env.example` and set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`.
-3. Run the install script (from project root). It creates a venv (`.venv`) and installs dependencies if missing:
+3. Install dependencies for system Python: `pip3 install -r requirements.txt` or `sudo python3 -m pip install -r requirements.txt`.
+4. Run the install script (from project root):
 
    ```bash
    bash deployment/install_service.sh /opt/ultimate-screener
    ```
 
-   The script copies the systemd unit (with your path), enables and starts the service. The service runs using `.venv/bin/python` so all dependencies (e.g. python-dotenv, ccxt) are available.
-
-4. Check logs:
+5. Check logs:
 
    ```bash
    sudo journalctl -u mexc-screener -f
    ```
 
-5. Restart/stop:
+6. Restart/stop:
 
    ```bash
    sudo systemctl restart mexc-screener
