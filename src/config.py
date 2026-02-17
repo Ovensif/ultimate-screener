@@ -69,10 +69,24 @@ ETH_DUMP_4H = _float("ETH_DUMP_4H", -3.0)              # ETH 4H dump threshold %
 MAX_SIGNALS_PER_DAY = _int("MAX_SIGNALS_PER_DAY", 8)   # daily signal cap
 MAX_LEVERAGE = _int("MAX_LEVERAGE", 3)                  # max suggested leverage (was 5)
 
+# Alert 10: sweep-only altcoin list, notify only when list composition changes
+def _bool(key: str, default: bool) -> bool:
+    val = os.environ.get(key, "").strip().lower()
+    if val in ("1", "true", "yes"):
+        return True
+    if val in ("0", "false", "no"):
+        return False
+    return default
+
+ALERT10_ENABLED = _bool("ALERT10_ENABLED", True)
+ALERT10_INTERVAL = _int("ALERT10_INTERVAL", 3600)
+ALERT10_MAX_COINS = _int("ALERT10_MAX_COINS", 10)
+
 # Paths
 DATA_DIR = PROJECT_ROOT / os.environ.get("DATA_DIR", "data")
 LOGS_DIR = PROJECT_ROOT / os.environ.get("LOGS_DIR", "logs")
 BLACKLIST_PATH = PROJECT_ROOT / "config" / "blacklist.txt"
+ALERT10_LIST_FILE = DATA_DIR / "alert10_list.json"
 
 # Ensure dirs exist
 DATA_DIR.mkdir(parents=True, exist_ok=True)

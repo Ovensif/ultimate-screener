@@ -21,7 +21,8 @@ from src.data_fetcher import MEXCDataFetcher
 from src.market_analyzer import analyze
 from src.risk_calculator import calculate
 from src.signal_generator import generate_signals
-from src.telegram_bot import send_signal, send_startup_message
+from src.alert10_screener import build_alert10_list
+from src.telegram_bot import send_alert10_list_change, send_signal, send_startup_message
 from src.watchlist_manager import WatchlistManager
 import logging.handlers
 
@@ -244,6 +245,59 @@ def _refresh_watchlist() -> None:
     _watchlist_manager.refresh()
 
 
+def _load_alert10_list() -> list:
+    """Load previous Alert 10 list from file. Return list of symbols or [] if missing/invalid."""
+    path = getattr(config, "ALERT10_LIST_FILE", config.DATA_DIR / "alert10_list.json")
+    if not path.exists():
+        return []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        symbols = data.get("symbols")
+        return list(symbols) if isinstance(symbols, list) else []
+    except Exception:
+        return []
+
+
+def _save_alert10_list(symbols: list) -> None:
+    """Persist Alert 10 list to file."""
+    path = getattr(config, "ALERT10_LIST_FILE", config.DATA_DIR / "alert10_list.json")
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(
+                {"symbols": symbols, "updated_utc": datetime.now(timezone.utc).isoformat()},
+                f,
+                indent=2,
+            )
+    except Exception as e:
+        logging.getLogger(__name__).warning("Could not write alert10_list.json: %s", e)
+
+
+def _run_alert10() -> None:
+    """
+    Build Alert 10 list (sweep-only 1D/4H/1H), compare with previous.
+    Send Telegram only when list composition changed (delisted or new coins); then persist.
+    """
+    logger = logging.getLogger(__name__)
+    if _shutdown:
+        return
+    watchlist = _watchlist_manager.get_watchlist()
+    if not watchlist:
+        logger.debug("Alert10: watchlist empty, skip")
+        return
+    current_list = build_alert10_list(watchlist, _fetcher)
+    previous_list = _load_alert10_list()
+    previous_set = set(previous_list)
+    current_set = set(current_list)
+    delisted = sorted(previous_set - current_set)
+    new_coins = sorted(current_set - previous_set)
+    if delisted or new_coins:
+        ok = send_alert10_list_change(delisted, new_coins, current_list)
+        if ok:
+            logger.info("Alert10 list changed: out=%s in=%s", delisted, new_coins)
+    _save_alert10_list(current_list)
+
+
 def main() -> int:
     global _fetcher, _watchlist_manager, _shutdown
 
@@ -274,6 +328,9 @@ def main() -> int:
     scheduler = BlockingScheduler()
     scheduler.add_job(_run_scan, "interval", seconds=config.SCAN_INTERVAL, id="scan")
     scheduler.add_job(_refresh_watchlist, "interval", seconds=config.WATCHLIST_REFRESH, id="watchlist")
+    if getattr(config, "ALERT10_ENABLED", False):
+        scheduler.add_job(_run_alert10, "interval", seconds=config.ALERT10_INTERVAL, id="alert10")
+        _run_alert10()  # run once at startup so first list is persisted and user notified if list exists
 
     def _graceful(signum, frame):
         global _shutdown

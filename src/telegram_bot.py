@@ -3,7 +3,7 @@ Telegram alerts: send signal message and startup message. Plain text, no markdow
 """
 import logging
 import time
-from typing import Any, Optional
+from typing import Any, List, Optional
 
 import requests
 
@@ -118,4 +118,27 @@ def send_signal(signal: Signal, risk_output: Optional[RiskResult] = None) -> boo
 def send_startup_message(coin_count: int) -> bool:
     """Send 'Scanner started, monitoring N coins'."""
     text = f"🚀 Scanner started, monitoring {coin_count} coins"
+    return _send_raw(text)
+
+
+def send_alert10_list_change(
+    delisted: List[str],
+    new_coins: List[str],
+    current_list: List[str],
+) -> bool:
+    """
+    Send one Telegram message when Alert 10 list composition changed (out / in).
+    Plain text, no markdown.
+    """
+    lines = [
+        "📋 Alert 10 list changed",
+        "",
+    ]
+    if delisted:
+        lines.append("Out: " + ", ".join(delisted))
+    if new_coins:
+        lines.append("In: " + ", ".join(new_coins))
+    lines.append("")
+    lines.append("Current list: " + ", ".join(current_list) if current_list else "Current list: (empty)")
+    text = "\n".join(lines)
     return _send_raw(text)
