@@ -42,32 +42,18 @@ def _float(key: str, default: float) -> float:
     except ValueError:
         return default
 
-SCAN_INTERVAL = _int("SCAN_INTERVAL", 600)
+# Watchlist (candidate pool for Alert 10)
 WATCHLIST_REFRESH = _int("WATCHLIST_REFRESH", 3600)
 MIN_VOLUME = _int("MIN_VOLUME", 100_000_000)
 MAX_COINS = _int("MAX_COINS", 20)
-ACCOUNT_SIZE = _float("ACCOUNT_SIZE", 200.0)
-RISK_PER_TRADE = _float("RISK_PER_TRADE", 2.0)
-MIN_RR_RATIO = _float("MIN_RR_RATIO", 2.0)
-TIMEFRAME = os.environ.get("TIMEFRAME", "4h").strip().lower()
-CONFIDENCE_THRESHOLD = os.environ.get("CONFIDENCE_THRESHOLD", "HIGH").strip().upper()
-
-# Beast-mode signal quality tunables
-ADX_MIN_SIGNAL = _float("ADX_MIN_SIGNAL", 20.0)       # min ADX for any signal
-ADX_STRONG = _float("ADX_STRONG", 35.0)                # ADX for "very strong trend" confluence
-RETEST_TOLERANCE = _float("RETEST_TOLERANCE", 0.003)   # 0.3% breakout retest proximity
-VOLUME_SPIKE_MULT = _float("VOLUME_SPIKE_MULT", 1.5)   # volume spike multiplier
-MAX_STOP_PCT = _float("MAX_STOP_PCT", 0.025)           # 2.5% max stop distance
-MIN_ATR_PCT = _float("MIN_ATR_PCT", 1.0)               # min ATR% (filter dead coins)
-MAX_ATR_PCT = _float("MAX_ATR_PCT", 8.0)               # max ATR% (filter extreme volatility)
-MIN_PRICE_CHANGE = _float("MIN_PRICE_CHANGE", 2.0)     # watchlist min 24h price change %
-MAX_SPREAD_PCT = _float("MAX_SPREAD_PCT", 0.1)         # watchlist max bid-ask spread %
-WATCHLIST_ADX_MIN = _float("WATCHLIST_ADX_MIN", 25.0)  # watchlist trend score ADX threshold
-BTC_DUMP_1H = _float("BTC_DUMP_1H", -5.0)              # BTC 1H dump threshold %
-BTC_DUMP_4H = _float("BTC_DUMP_4H", -3.0)              # BTC 4H dump threshold %
-ETH_DUMP_4H = _float("ETH_DUMP_4H", -3.0)              # ETH 4H dump threshold %
-MAX_SIGNALS_PER_DAY = _int("MAX_SIGNALS_PER_DAY", 8)   # daily signal cap
-MAX_LEVERAGE = _int("MAX_LEVERAGE", 3)                  # max suggested leverage (was 5)
+MIN_PRICE_CHANGE = _float("MIN_PRICE_CHANGE", 2.0)
+MAX_SPREAD_PCT = _float("MAX_SPREAD_PCT", 0.1)
+WATCHLIST_ADX_MIN = _float("WATCHLIST_ADX_MIN", 25.0)
+MIN_ATR_PCT = _float("MIN_ATR_PCT", 1.0)
+MAX_ATR_PCT = _float("MAX_ATR_PCT", 8.0)
+# Market analyzer (used by watchlist + Alert 10 screener)
+VOLUME_SPIKE_MULT = _float("VOLUME_SPIKE_MULT", 1.5)
+ADX_STRONG = _float("ADX_STRONG", 35.0)
 
 # Alert 10: sweep-only altcoin list, notify only when list composition changes
 def _bool(key: str, default: bool) -> bool:
@@ -81,6 +67,8 @@ def _bool(key: str, default: bool) -> bool:
 ALERT10_ENABLED = _bool("ALERT10_ENABLED", True)
 ALERT10_INTERVAL = _int("ALERT10_INTERVAL", 3600)
 ALERT10_MAX_COINS = _int("ALERT10_MAX_COINS", 10)
+ALERT10_RSI_STRONG = _float("ALERT10_RSI_STRONG", 65.0)   # RSI >= this = strong zone
+ALERT10_RSI_WEAK = _float("ALERT10_RSI_WEAK", 35.0)       # RSI <= this = weak zone
 
 # Paths
 DATA_DIR = PROJECT_ROOT / os.environ.get("DATA_DIR", "data")

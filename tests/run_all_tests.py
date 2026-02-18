@@ -1,5 +1,5 @@
 """
-Single entrypoint for all tests: MEXC connection, Telegram, TA, signal generation, risk calculator.
+Tests: MEXC connection, Telegram, technical analysis (market_analyzer).
 Run from project root: python tests/run_all_tests.py
 """
 import os
@@ -68,43 +68,12 @@ def test_technical_analysis() -> None:
     assert result.trend in ("uptrend", "downtrend", "range")
 
 
-def test_signal_generation() -> None:
-    import pandas as pd
-    from src.market_analyzer import analyze
-    from src.signal_generator import generate_signals
-    n = 100
-    import numpy as np
-    np.random.seed(123)
-    base = 100 + np.cumsum(np.random.randn(n) * 0.3)
-    df = pd.DataFrame({
-        "open": base,
-        "high": base + np.abs(np.random.randn(n)),
-        "low": base - np.abs(np.random.randn(n)),
-        "close": base + np.random.randn(n) * 0.5,
-        "volume": np.random.rand(n) * 1e6 + 5e5,
-    })
-    df["high"] = df[["open", "high", "close"]].max(axis=1)
-    df["low"] = df[["open", "low", "close"]].min(axis=1)
-    a_1d = analyze(df, "1d")
-    a_4h = analyze(df, "4h")
-    signals = generate_signals("BTC/USDT:USDT", a_1d, a_4h)
-    assert isinstance(signals, list)
-    for s in signals:
-        assert hasattr(s, "symbol") and hasattr(s, "side")
-        assert s.side in ("long", "short")
-        assert hasattr(s, "setup_type") and hasattr(s, "confidence")
-        assert hasattr(s, "entry_zone") and hasattr(s, "stop")
-        assert hasattr(s, "target1") and hasattr(s, "target2")
-        assert hasattr(s, "rr_ratio") and hasattr(s, "confluence_list")
-
-
-def test_risk_calculator() -> None:
-    from src.risk_calculator import calculate
-    entry, stop = 100.0, 98.0
-    r = calculate(entry, stop, "long", account_size=200, risk_pct=2)
-    assert r.risk_usd == 4.0
-    assert r.position_size_usd > 0
-    assert r.suggested_leverage >= 1
+def test_alert10_screener() -> None:
+    """Alert10 screener returns list (empty when no candidates)."""
+    from src.alert10_screener import build_alert10_list
+    from src.data_fetcher import MEXCDataFetcher
+    result = build_alert10_list([], MEXCDataFetcher(), max_coins=10)
+    assert result == []
 
 
 def main() -> int:
@@ -112,8 +81,7 @@ def main() -> int:
         ("MEXC connection", test_mexc_connection),
         ("Telegram", test_telegram),
         ("Technical analysis", test_technical_analysis),
-        ("Signal generation", test_signal_generation),
-        ("Risk calculator", test_risk_calculator),
+        ("Alert10 screener", test_alert10_screener),
     ]
     failed = []
     for name, fn in tests:
