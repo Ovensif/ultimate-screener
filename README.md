@@ -1,21 +1,24 @@
-# MEXC Futures Signal Screener
+# MEXC Alert 10 Bot
 
-Professional cryptocurrency futures trading signal screener for MEXC exchange. Scans altcoin USDT perpetuals, applies trend-following breakout/retest and liquidity-sweep logic, and sends high-probability signals via Telegram.
+Bot that sends you a **Top 10 altcoin list** via Telegram when the list changes. Coins are selected from a liquid watchlist and must have:
+
+1. **RSI in strong or weak zone** (RSI ≥ 65 or RSI ≤ 35)
+2. **Confirmed sweep of swing high/low on 4H** (liquidity sweep)
+
+The list is not “top 10 by market cap”—it’s the top 10 that meet these criteria. You get a **single Telegram message** only when the list composition changes (coins in/out).
 
 ## Features
 
-- **Dynamic watchlist**: Top coins by volume, volatility, and trend strength (refreshed hourly).
-- **Multi-timeframe analysis**: 1D trend filter + 4H setup detection (breakout retest, liquidity sweep, trend continuation).
-- **Confluence scoring**: Volume, RSI, MACD, support/resistance; only HIGH confidence signals sent (configurable).
-- **Risk management**: Min 1:2 R:R, stop capped 2–3%, position sizing for your account.
-- **Telegram alerts**: Formatted messages with entry zone, stop, targets, and chart link.
-- **Anti-spam**: Max one signal per coin per 4 hours; BTC dump filter (suppress when BTC &lt; -5% 1h).
+- **Dynamic watchlist**: Candidate pool by volume, volatility, and trend (refreshed on an interval).
+- **4H-only screening**: RSI strong/weak + confirmed sweep of swing high/low on 4H.
+- **Telegram on change only**: One message when the Top 10 list changes (Out / In / current list).
+- **Configurable**: Intervals, RSI thresholds, and list size via `.env`.
 
 ## Requirements
 
 - Python 3.9+
 - MEXC (ccxt), Telegram Bot Token and Chat ID
-- `pandas-ta` for full technical context and confluence (RSI, MACD, ADX, EMA, Bollinger Bands, OBV, ATR, Stoch RSI). Built-in fallbacks exist for core indicators if the package cannot be installed on your Python version.
+- `pandas-ta` recommended for full technical analysis (RSI, structure, etc.); fallbacks exist if not installed.
 
 ## Install
 
@@ -39,21 +42,20 @@ copy config\.env.example .env
 From project root:
 
 ```bash
-python3 main.py
+python main.py
 ```
 or
 ```bash
 python src/main.py
 ```
 
-You should receive a Telegram message: "Scanner started, monitoring N coins". Signals are sent when conditions are met.
+You get a Telegram message: "Scanner started, monitoring N coins". After that, you only receive a message when the **Top 10 list changes** (Out / In / current list).
 
-One-shot (single scan then exit, e.g. for cron):
+One-shot (build list once and exit, e.g. for cron):
 
 ```bash
-python3 main.py --once
+python main.py --once
 ```
-(or `python src/main.py --once`)
 
 ## Configuration
 
@@ -63,37 +65,42 @@ See `config/.env.example`. Key variables:
 |----------|-------------|---------|
 | TELEGRAM_BOT_TOKEN | Bot token from @BotFather | required |
 | TELEGRAM_CHAT_ID | Chat or group ID for alerts | required |
-| SCAN_INTERVAL | Seconds between scans | 300 |
 | WATCHLIST_REFRESH | Seconds between watchlist refresh | 3600 |
+| ALERT10_INTERVAL | Seconds between Top 10 list runs | 3600 |
+| ALERT10_MAX_COINS | Size of the list sent | 10 |
+| ALERT10_RSI_STRONG | RSI ≥ this = strong zone | 65 |
+| ALERT10_RSI_WEAK | RSI ≤ this = weak zone | 35 |
 | MIN_VOLUME | Min 24h volume (USD) for watchlist | 100000000 |
-| MAX_COINS | Max symbols in watchlist | 20 |
-| ACCOUNT_SIZE | Account size for position sizing | 200 |
-| RISK_PER_TRADE | Risk % per trade | 2 |
-| MIN_RR_RATIO | Minimum risk:reward | 2.0 |
-| CONFIDENCE_THRESHOLD | HIGH or MEDIUM | HIGH |
+| MAX_COINS | Max symbols in watchlist (candidate pool) | 20 |
+
+## How often it runs
+
+When run as a service (e.g. systemd on a VPS):
+
+- **Watchlist** is refreshed every `WATCHLIST_REFRESH` seconds (default: 1 hour).
+- **Alert 10** (build list, compare, send Telegram if changed) runs every `ALERT10_INTERVAL` seconds (default: 1 hour), plus once at startup.
+
+So by default the bot evaluates the Top 10 list **every hour**. Set `ALERT10_INTERVAL` and `WATCHLIST_REFRESH` in `.env` to change that (values in seconds).
 
 ## Project structure
 
 ```
 ultimate-screener/
 ├── src/
-│   ├── main.py           # Orchestrator and scheduler
-│   ├── config.py          # Settings from .env
-│   ├── data_fetcher.py    # MEXC OHLCV, ticker, markets
-│   ├── market_analyzer.py # Structure, volume, indicators
-│   ├── signal_generator.py# Setup and confluence logic
-│   ├── telegram_bot.py    # Telegram alerts
-│   ├── watchlist_manager.py
-│   ├── risk_calculator.py
-│   └── stats.py           # Performance stats from signal log
+│   ├── main.py              # Orchestrator and scheduler
+│   ├── config.py            # Settings from .env
+│   ├── data_fetcher.py      # MEXC OHLCV, ticker, markets
+│   ├── market_analyzer.py   # Structure, volume, indicators, sweep
+│   ├── alert10_screener.py  # Top 10: RSI + 4H sweep filter
+│   ├── telegram_bot.py      # Startup + Alert 10 list-change messages
+│   └── watchlist_manager.py # Candidate pool for screener
 ├── config/
 │   ├── .env.example
 │   └── blacklist.txt
-├── data/                  # Cache and signals.json
-├── logs/                  # screener.log
-├── deployment/            # systemd, cron, Windows
+├── data/                    # Cache, alert10_list.json
+├── logs/                    # screener.log
 └── tests/
-    └── run_all_tests.py   # Single test entrypoint
+    └── run_all_tests.py     # MEXC, Telegram, TA, Alert10 screener
 ```
 
 ## Tests
@@ -104,23 +111,14 @@ From project root:
 python tests/run_all_tests.py
 ```
 
-Runs: MEXC connection, Telegram (if token set), technical analysis, signal generation on synthetic data, risk calculator.
-
-## Stats
-
-View signal counts and breakdown:
-
-```bash
-python src/stats.py
-```
+Runs: MEXC connection, Telegram (if token set), technical analysis (market_analyzer), Alert10 screener.
 
 ## Documentation
 
-- [STRATEGY.md](STRATEGY.md) – Trading logic and setups
 - [API.md](API.md) – MEXC API usage and rate limits
 - [DEPLOYMENT.md](DEPLOYMENT.md) – Run 24/7 (systemd, cron, Windows)
 - [FAQ.md](FAQ.md) – Troubleshooting
 
 ## Disclaimer
 
-This tool is for education and research. Verify every setup yourself. Not financial advice.
+This tool is for education and research. Not financial advice.
