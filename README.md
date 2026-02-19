@@ -47,6 +47,8 @@ bash deployment/install_service.sh /opt/ultimate-screener
 - **As service (Linux)**: Installed by `install_service.sh`. Use `sudo systemctl start mexc-screener`, `journalctl -u mexc-screener -f`, etc.
 - **One-shot (Linux only)**: `python -u src/main.py --once` — runs one scan and exits (still requires Linux).
 
+If something fails, see [DEPLOYMENT.md](DEPLOYMENT.md#where-to-see-errors) for where to see errors (journal vs log file vs terminal).
+
 ## Project structure
 
 ```

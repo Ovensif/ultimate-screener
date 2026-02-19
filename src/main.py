@@ -105,7 +105,7 @@ def _run_scan() -> None:
 
     # Rank: both SWH+SWL first, then volume order; take top 10
     def _rank_key(item):
-        r, idx = item
+        idx, r = item  # enumerate gives (index, result)
         both = r.swept_swing_high and r.swept_swing_low
         return (0 if both else 1, -idx)
     ranked = sorted(enumerate(results), key=_rank_key)

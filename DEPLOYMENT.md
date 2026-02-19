@@ -99,6 +99,24 @@ Press **Ctrl+C** to stop.
 
 ---
 
+## Where to see errors
+
+- **Running as a service**  
+  Errors (and all output) go to the **systemd journal**. To view recent lines:
+  ```bash
+  sudo journalctl -u mexc-screener -n 50
+  ```
+  To follow live:
+  ```bash
+  sudo journalctl -u mexc-screener -f
+  ```
+  The app also writes logs to **`logs/screener.log`** in the project folder (e.g. `/opt/ultimate-screener/logs/screener.log`). Check that file for the same messages if you prefer.
+
+- **Running manually** (e.g. `python -u src/main.py --once`)  
+  Errors appear in the **terminal** (stdout/stderr). Log messages go to the terminal and to **`logs/screener.log`** in the project folder.
+
+---
+
 ## One-shot run (Linux only)
 
 From project root:
