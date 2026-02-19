@@ -90,8 +90,8 @@ def _run_scan() -> None:
         _fetcher,
         timeframe=config.SWING_TIMEFRAME,
         limit=100,
-        pivot_left=config.SWING_PIVOT_LEFT,
-        pivot_right=config.SWING_PIVOT_RIGHT,
+        pivot_len=config.SWING_PIVOT_LEN,
+        swing_lookback=config.SWING_LOOKBACK,
     )
     if not results:
         logger.info("No pairs with SWH/SWL sweep this run")

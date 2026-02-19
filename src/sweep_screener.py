@@ -1,7 +1,8 @@
 """
-Swing High / Swing Low sweep detection.
-- Pivot logic from commit aec9c8e (market_analyzer): left=7, right=3; last 10 swing highs/lows.
-- Sweep = liquidity sweep with confirmation: wick beyond S/R, close back inside, confirmed by candle direction.
+Swing High / Swing Low sweep detection — aligned with Pine Script Crypto View 1.0.
+- Pivot: ta.pivothigh(high, 5, 5) / ta.pivotlow(low, 5, 5) → confPivotLen = 5.
+- Swept: (bar_index - swingBar) <= confSwingBars and current bar breaks level (Pine Tables group).
+- Used for daily trading: pairs that just swept SWH/SWL so you can check for deviation / continuation.
 """
 import logging
 from dataclasses import dataclass
@@ -11,110 +12,56 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-# Pivot params from aec9c8e market_analyzer: wider left, faster right
-DEFAULT_PIVOT_LEFT = 7
-DEFAULT_PIVOT_RIGHT = 3
-# Keep last N pivots (aec9c8e returns last 10)
-PIVOT_TAIL = 10
+# Crypto View 1.0 defaults (Tables group)
+CONF_PIVOT_LEN = 5   # confPivotLen
+CONF_SWING_BARS = 30  # confSwingBars
 
-# Backward compatibility with config that may still use Pine-style names
-DEFAULT_PIVOT_LEN = 5
-DEFAULT_SWING_LOOKBACK = 30
-
-# Base symbols to exclude (stablecoins)
+# Stablecoins to exclude
 STABLECOIN_BASES = frozenset({
     "USDT", "USDC", "BUSD", "DAI", "TUSD", "USDP", "USDD", "FRAX", "GUSD", "LUSD",
 })
 
 
-def _detect_pivots(
-    df: pd.DataFrame,
-    left: int = DEFAULT_PIVOT_LEFT,
-    right: int = DEFAULT_PIVOT_RIGHT,
-) -> Tuple[List[Tuple[int, float]], List[Tuple[int, float]]]:
-    """
-    Swing highs/lows by rolling max/min (aec9c8e style).
-    Returns (list of (index, price) for swing highs, same for swing lows), last PIVOT_TAIL each.
-    """
-    if df is None or len(df) < left + right + 1:
-        return [], []
-    high = df["high"]
-    low = df["low"]
-    swing_highs: List[Tuple[int, float]] = []
-    swing_lows: List[Tuple[int, float]] = []
-    for i in range(left, len(df) - right):
-        window_high = high.iloc[i - left : i + right + 1]
-        window_low = low.iloc[i - left : i + right + 1]
-        if high.iloc[i] >= window_high.max():
-            swing_highs.append((i, float(high.iloc[i])))
-        if low.iloc[i] <= window_low.min():
-            swing_lows.append((i, float(low.iloc[i])))
-    return swing_highs[-PIVOT_TAIL:], swing_lows[-PIVOT_TAIL:]
+def pivot_high(high: pd.Series, left: int, right: int) -> List[Tuple[int, float]]:
+    """Pine ta.pivothigh(high, left, right). Returns [(index, price), ...]."""
+    out: List[Tuple[int, float]] = []
+    for i in range(left, len(high) - right):
+        window = high.iloc[i - left : i + right + 1]
+        if high.iloc[i] >= window.max():
+            out.append((i, float(high.iloc[i])))
+    return out
 
 
-def _detect_liquidity_sweep(
-    df: pd.DataFrame,
-    support: float,
-    resistance: float,
-) -> Tuple[Optional[str], bool]:
-    """
-    Detect wick beyond level with close back inside (aec9c8e).
-    Returns (sweep_direction, sweep_confirmed). "long" = swept below support, "short" = swept above resistance.
-    sweep_confirmed = sweep candle closes inside and direction confirmed (bullish/bearish close).
-    """
-    if df is None or len(df) < 3:
-        return None, False
-    last = df.iloc[-1]
-    prev = df.iloc[-2]
-    low = last["low"]
-    high = last["high"]
-    close = last["close"]
-    mid = (high + low) / 2
-
-    # Current bar: sweep below support then close above
-    if low < support and close > support and close > mid:
-        confirmed = close > last["open"]
-        return "long", confirmed
-    # Current bar: sweep above resistance then close below
-    if high > resistance and close < resistance and close < mid:
-        confirmed = close < last["open"]
-        return "short", confirmed
-
-    # Previous bar swept, current bar confirms
-    prev_low = prev["low"]
-    prev_close = prev["close"]
-    prev_high = prev["high"]
-    if prev_low < support and prev_close > support:
-        if close > prev_close and close > last["open"]:
-            return "long", True
-    if prev_high > resistance and prev_close < resistance:
-        if close < prev_close and close < last["open"]:
-            return "short", True
-
-    return None, False
+def pivot_low(low: pd.Series, left: int, right: int) -> List[Tuple[int, float]]:
+    """Pine ta.pivotlow(low, left, right). Returns [(index, price), ...]."""
+    out: List[Tuple[int, float]] = []
+    for i in range(left, len(low) - right):
+        window = low.iloc[i - left : i + right + 1]
+        if low.iloc[i] <= window.min():
+            out.append((i, float(low.iloc[i])))
+    return out
 
 
 def _base_from_symbol(symbol: str) -> str:
-    """Extract base asset from symbol, e.g. ETH/USDT:USDT -> ETH."""
+    """Extract base asset, e.g. ETH/USDT:USDT -> ETH."""
     if not symbol:
         return ""
     return symbol.split("/")[0].strip().upper()
 
 
 def is_stablecoin_pair(symbol: str) -> bool:
-    """True if the pair's base asset is a known stablecoin (excluded from scan)."""
     return _base_from_symbol(symbol) in STABLECOIN_BASES
 
 
 def symbol_to_display_ticker(symbol: str) -> str:
-    """Convert exchange symbol to short display ticker, e.g. ETH/USDT:USDT -> ETHUSDT."""
+    """Exchange symbol -> display ticker, e.g. ETH/USDT:USDT -> ETHUSDT."""
     base = _base_from_symbol(symbol)
     return f"{base}USDT" if base else symbol
 
 
 @dataclass
 class SweepResult:
-    """Result of sweep check for one pair."""
+    """One pair's sweep result for Crypto View style alerts."""
     symbol: str
     swept_swing_high: bool
     swept_swing_low: bool
@@ -123,57 +70,77 @@ class SweepResult:
     last_high: float
     last_low: float
     last_close: float
+    # For 10/10 Telegram: actionable signal and level
+    signal: str  # "LONG" | "SHORT" | "BOTH"
+    level: Optional[float]  # Key level swept (SL for LONG, SH for SHORT; BOTH = primary)
 
 
 def check_sweep(
     df: pd.DataFrame,
     symbol: str = "",
-    pivot_left: int = DEFAULT_PIVOT_LEFT,
-    pivot_right: int = DEFAULT_PIVOT_RIGHT,
+    pivot_len: int = CONF_PIVOT_LEN,
+    swing_lookback: int = CONF_SWING_BARS,
 ) -> Optional[SweepResult]:
     """
-    Check if the pair has a confirmed liquidity sweep (aec9c8e logic).
-    Pivots: left/right bars; S/R from last 5 swing lows/highs; sweep = wick beyond level + close back inside + confirmation.
-    Returns SweepResult or None if insufficient data.
+    Pine Crypto View 1.0 logic: most recent swing high/low, then check if current bar swept.
+    swingHighSwept = (bar_index - swingHighBar) <= confSwingBars and high >= lastSwingHigh
+    swingLowSwept  = (bar_index - swingLowBar) <= confSwingBars and low <= lastSwingLow
     """
-    if df is None or len(df) < pivot_left + pivot_right + 20:
+    if df is None or len(df) < pivot_len * 2 + swing_lookback + 5:
+        return None
+    high = df["high"]
+    low = df["low"]
+    n = len(df)
+    current_bar = n - 1
+
+    ph_list = pivot_high(high, pivot_len, pivot_len)
+    pl_list = pivot_low(low, pivot_len, pivot_len)
+    if not ph_list and not pl_list:
         return None
 
-    swing_highs_idx, swing_lows_idx = _detect_pivots(df, left=pivot_left, right=pivot_right)
-    swing_highs = [v for _, v in swing_highs_idx]
-    swing_lows = [v for _, v in swing_lows_idx]
+    last_sh_idx, last_sh_price = max(ph_list, key=lambda x: x[0]) if ph_list else (None, None)
+    last_sl_idx, last_sl_price = max(pl_list, key=lambda x: x[0]) if pl_list else (None, None)
 
-    support_levels = sorted(set(swing_lows))[-5:] if swing_lows else []
-    resistance_levels = sorted(set(swing_highs))[-5:] if swing_highs else []
-    support = float(support_levels[-1]) if support_levels else float(df["low"].min())
-    resistance = float(resistance_levels[-1]) if resistance_levels else float(df["high"].max())
+    swept_high = False
+    swept_low = False
+    if last_sh_idx is not None and last_sh_price is not None:
+        if (current_bar - last_sh_idx) <= swing_lookback and high.iloc[current_bar] >= last_sh_price:
+            swept_high = True
+    if last_sl_idx is not None and last_sl_price is not None:
+        if (current_bar - last_sl_idx) <= swing_lookback and low.iloc[current_bar] <= last_sl_price:
+            swept_low = True
 
-    liquidity_sweep, sweep_confirmed = _detect_liquidity_sweep(df, support, resistance)
+    if not swept_high and not swept_low:
+        return None
 
-    # Map to our SweepResult: "long" = swept swing low, "short" = swept swing high
-    swept_swing_low = liquidity_sweep == "long" and sweep_confirmed
-    swept_swing_high = liquidity_sweep == "short" and sweep_confirmed
+    # Signal and level for Telegram (daily trading: what to look for)
+    if swept_high and swept_low:
+        signal = "BOTH"
+        level = last_sl_price  # show SL as primary for level
+    elif swept_high:
+        signal = "SHORT"
+        level = last_sh_price
+    else:
+        signal = "LONG"
+        level = last_sl_price
 
-    last_sh = float(resistance_levels[-1]) if resistance_levels else None
-    last_sl = float(support_levels[-1]) if support_levels else None
     last = df.iloc[-1]
     return SweepResult(
         symbol=symbol,
-        swept_swing_high=swept_swing_high,
-        swept_swing_low=swept_swing_low,
-        last_swing_high=last_sh,
-        last_swing_low=last_sl,
+        swept_swing_high=swept_high,
+        swept_swing_low=swept_low,
+        last_swing_high=last_sh_price,
+        last_swing_low=last_sl_price,
         last_high=float(last["high"]),
         last_low=float(last["low"]),
         last_close=float(last["close"]),
+        signal=signal,
+        level=level,
     )
 
 
 def get_pairs_by_volume(fetcher, min_volume: int) -> List[str]:
-    """
-    Fetch USDT perpetual futures, keep only symbols with 24h volume >= min_volume.
-    Returns list of symbols sorted by volume descending.
-    """
+    """USDT perpetuals with 24h volume >= min_volume, sorted by volume desc. Excludes stablecoins."""
     markets = fetcher.fetch_futures_markets()
     if not markets:
         return []
@@ -201,19 +168,16 @@ def pairs_that_swept(
     fetcher,
     timeframe: str = "4h",
     limit: int = 100,
-    pivot_left: int = DEFAULT_PIVOT_LEFT,
-    pivot_right: int = DEFAULT_PIVOT_RIGHT,
+    pivot_len: int = CONF_PIVOT_LEN,
+    swing_lookback: int = CONF_SWING_BARS,
 ) -> List[SweepResult]:
-    """
-    For each symbol, fetch OHLCV, run check_sweep (aec9c8e liquidity-sweep logic).
-    Return list of SweepResult where swept_swing_high or swept_swing_low is True.
-    """
+    """Fetch OHLCV per symbol, run check_sweep (Pine logic). Return only pairs that swept SWH or SWL."""
     results: List[SweepResult] = []
     for symbol in symbols:
         try:
             df = fetcher.fetch_ohlcv(symbol, timeframe, limit=limit)
-            r = check_sweep(df, symbol=symbol, pivot_left=pivot_left, pivot_right=pivot_right)
-            if r and (r.swept_swing_high or r.swept_swing_low):
+            r = check_sweep(df, symbol=symbol, pivot_len=pivot_len, swing_lookback=swing_lookback)
+            if r:
                 results.append(r)
         except Exception as e:
             logger.debug("Sweep check %s: %s", symbol, e)
