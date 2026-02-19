@@ -15,6 +15,11 @@ logger = logging.getLogger(__name__)
 DEFAULT_PIVOT_LEN = 5
 DEFAULT_SWING_LOOKBACK = 30
 
+# Base symbols to exclude (stablecoins)
+STABLECOIN_BASES = frozenset({
+    "USDT", "USDC", "BUSD", "DAI", "TUSD", "USDP", "USDD", "FRAX", "GUSD", "LUSD",
+})
+
 
 def pivot_high(high: pd.Series, left: int, right: int) -> List[Tuple[int, float]]:
     """
@@ -42,11 +47,21 @@ def pivot_low(low: pd.Series, left: int, right: int) -> List[Tuple[int, float]]:
     return out
 
 
+def _base_from_symbol(symbol: str) -> str:
+    """Extract base asset from symbol, e.g. ETH/USDT:USDT -> ETH."""
+    if not symbol:
+        return ""
+    return symbol.split("/")[0].strip().upper()
+
+
+def is_stablecoin_pair(symbol: str) -> bool:
+    """True if the pair's base asset is a known stablecoin (excluded from scan)."""
+    return _base_from_symbol(symbol) in STABLECOIN_BASES
+
+
 def symbol_to_display_ticker(symbol: str) -> str:
     """Convert exchange symbol to short display ticker, e.g. ETH/USDT:USDT -> ETHUSDT."""
-    if not symbol:
-        return symbol
-    base = symbol.split("/")[0].strip().upper()
+    base = _base_from_symbol(symbol)
     return f"{base}USDT" if base else symbol
 
 
@@ -130,7 +145,7 @@ def get_pairs_by_volume(fetcher, min_volume: int) -> List[str]:
     candidates: List[Tuple[str, float]] = []
     for m in markets:
         symbol = m.get("symbol")
-        if not symbol:
+        if not symbol or is_stablecoin_pair(symbol):
             continue
         ticker = fetcher.fetch_ticker(symbol)
         if not ticker:
