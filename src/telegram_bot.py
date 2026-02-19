@@ -94,8 +94,17 @@ def send_top10_sweep_table(
     """
     if not top10_results:
         return True
-    header = "No   Ticker      Sweep   Status"
-    sep = "─" * 36
+
+    # Column widths for box-drawn table
+    w_no, w_ticker, w_sweep, w_status = 4, 14, 12, 10
+    pad = lambda s, w: (str(s))[:w].ljust(w)
+
+    top = "┌" + "┬".join(["─" * w_no, "─" * w_ticker, "─" * w_sweep, "─" * w_status]) + "┐"
+    mid = "├" + "┼".join(["─" * w_no, "─" * w_ticker, "─" * w_sweep, "─" * w_status]) + "┤"
+    bot = "└" + "┴".join(["─" * w_no, "─" * w_ticker, "─" * w_sweep, "─" * w_status]) + "┘"
+    row = lambda a, b, c, d: "│" + "│".join([pad(a, w_no), pad(b, w_ticker), pad(c, w_sweep), pad(d, w_status)]) + "│"
+
+    header = row(" No ", " Ticker ", " Sweep ", " Status ")
     rows = []
     for i, r in enumerate(top10_results, 1):
         ticker = symbol_to_display_ticker(r.symbol)
@@ -106,8 +115,16 @@ def send_top10_sweep_table(
         else:
             sweep = "🔽 SL"
         status = "🔁 Return" if r.symbol in previous_symbols else "🆕 New"
-        rows.append(f"{i:<4} {ticker:<12} {sweep:<10} {status}")
-    table = "\n".join([header, sep] + rows)
-    title = "📊 TOP 10 — Just Swept Swing High / Low"
-    body = f"<b>{_html_escape(title)}</b>\n\n<pre>{_html_escape(table)}</pre>"
+        rows.append(row(f" {i} ", f" {ticker} ", f" {sweep} ", f" {status} "))
+    table_lines = [top, header, mid] + rows + [bot]
+    table = "\n".join(table_lines)
+
+    title = "📊 TOP 10 — Just Swept SWH / SWL"
+    subtitle = "Pairs that broke Swing High or Low on the last closed candle"
+    body = (
+        f"<b>{_html_escape(title)}</b>\n"
+        f"<i>{_html_escape(subtitle)}</i>\n\n"
+        f"<pre>{_html_escape(table)}</pre>\n"
+        f"<i>MEXC futures • {_html_escape(getattr(config, 'SWING_TIMEFRAME', '4h'))}</i>"
+    )
     return _send_raw(body, parse_mode="HTML")
