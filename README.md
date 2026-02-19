@@ -1,17 +1,17 @@
-# Ultimate Screener (SWH/SWL)
+﻿# Ultimate Screener (SWH/SWL)
 
 Simple bot that:
 
 1. **Filters pairs** by 24h volume ≥ 300,000 (configurable)
 2. **Runs every 10 minutes** (configurable)
-3. **Checks if each pair has already swept** Swing High (SWH) or Swing Low (SWL), using logic from [Pine Script Crypto View 1.0](https://www.tradingview.com/pine-script/) (pivot length 5, lookback 30 bars)
+3. **Checks if each pair has a confirmed liquidity sweep** of Swing High (SWH) or Swing Low (SWL), using logic from commit aec9c8e (pivot 7/3 bars, wick beyond S/R + close back inside + confirmation)
 
 Runs **as a Linux systemd service only** (e.g. on a VPS).
 
 ## Features
 
 - **Volume filter**: Only USDT perpetual futures with 24h volume ≥ `MIN_VOLUME` (default 300,000)
-- **SWH/SWL sweep**: Pine-style pivot high/low (length 5), then detect if price has swept those levels within the last 30 bars
+- **SWH/SWL sweep**: Pivot high/low (7 left, 3 right bars); S/R from last 5 swing levels; sweep = wick beyond level, close back inside, confirmed by candle direction
 - **Interval**: Scan runs every `SCAN_INTERVAL` seconds (default 600 = 10 minutes)
 - **Telegram**: Sends a Top 10 table to your chat whenever the bot finds pairs that swept SWH/SWL (requires token and chat ID)
 
@@ -36,9 +36,9 @@ bash deployment/install_service.sh /opt/ultimate-screener
 |----------|-------------|---------|
 | MIN_VOLUME | Min 24h volume (USD) to include a pair | 300000 |
 | SCAN_INTERVAL | Seconds between scans | 600 (10 min) |
-| SWING_PIVOT_LEN | Pivot bars left/right (Pine style) | 5 |
-| SWING_LOOKBACK | Bars after pivot to check for sweep | 30 |
-| SWING_TIMEFRAME | OHLCV timeframe for swing detection | 4h |
+| SWING_PIVOT_LEFT | Pivot bars to the left | 7 |
+| SWING_PIVOT_RIGHT | Pivot bars to the right | 3 |
+| SWING_TIMEFRAME | OHLCV timeframe for sweep detection | 4h |
 | TELEGRAM_BOT_TOKEN | Telegram bot token (required; sends Top 10 table when sweeps found) | — |
 | TELEGRAM_CHAT_ID | Telegram chat ID (required) | — |
 
@@ -57,7 +57,7 @@ ultimate-screener/
 │   ├── main.py           # Entry: Linux check, scheduler every 10 min
 │   ├── config.py         # MIN_VOLUME, SCAN_INTERVAL, swing params
 │   ├── data_fetcher.py   # MEXC OHLCV, ticker, markets
-│   ├── sweep_screener.py # Volume filter + SWH/SWL sweep (Pine logic)
+│   ├── sweep_screener.py # Volume filter + SWH/SWL liquidity sweep (aec9c8e)
 │   └── telegram_bot.py   # Optional sweep report
 ├── config/
 │   └── .env.example
@@ -68,13 +68,13 @@ ultimate-screener/
 └── requirements.txt
 ```
 
-## Swing High / Low (Pine reference)
+## Swing High / Low (aec9c8e liquidity sweep)
 
-Logic follows **Crypto View 1.0** Pine script:
+Sweep logic from commit aec9c8e:
 
-- **Pivot High**: `ta.pivothigh(high, 5, 5)` — bar is a swing high if it’s the max of 5 bars left and 5 bars right
-- **Pivot Low**: `ta.pivotlow(low, 5, 5)`
-- **Swept**: Within 30 bars after the pivot bar, price has gone through the level (high ≥ swing high or low ≤ swing low)
+- **Pivots**: Rolling max/min with 7 bars left, 3 bars right; keep last 10 swing highs and 10 swing lows
+- **S/R**: Strongest support = top of last 5 swing lows; strongest resistance = top of last 5 swing highs
+- **Sweep**: Wick beyond the level (low &lt; support or high &gt; resistance), then close back inside; **confirmed** when the sweep candle closes in direction (bullish for long sweep, bearish for short)
 
 ## Documentation
 

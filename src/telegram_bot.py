@@ -88,31 +88,36 @@ def send_top10_sweep_table(
     previous_symbols: Set[str],
 ) -> bool:
     """
-    Send one Telegram message: Top 10 list with bold tickers and clear status.
+    Send one Telegram message: Top 10 table (No | Ticker | Sweep | Status).
     previous_symbols: set of symbols we already sent before -> 🔁, else 🆕.
     Returns True if send succeeded.
     """
     if not top10_results:
         return True
 
-    tf = _html_escape(getattr(config, "SWING_TIMEFRAME", "4h"))
-    lines = [
-        "🔔 <b>TOP 10 — Current bar swept nearest SWH/SWL</b>",
-        "",
-        "<i>Only pairs where the last candle broke the nearest swing level.</i>",
-        "",
-    ]
+    w_no, w_ticker, w_sweep, w_status = 4, 14, 10, 6
+    pad = lambda s, w: (str(s))[:w].ljust(w)
+
+    header = pad("No", w_no) + pad("Ticker", w_ticker) + pad("Sweep", w_sweep) + pad("Status", w_status)
+    sep = "─" * (w_no + w_ticker + w_sweep + w_status)
+    rows = []
     for i, r in enumerate(top10_results, 1):
-        ticker = _html_escape(symbol_to_display_ticker(r.symbol))
+        ticker = symbol_to_display_ticker(r.symbol)
         if r.swept_swing_high and r.swept_swing_low:
-            sweep = "🔼🔽 SH+SL"
+            sweep = "SH+SL"
         elif r.swept_swing_high:
-            sweep = "🔼 SH"
+            sweep = "SH"
         else:
-            sweep = "🔽 SL"
+            sweep = "SL"
         status = "🔁" if r.symbol in previous_symbols else "🆕"
-        lines.append(f"{i}. <b>{ticker}</b>  {sweep}  {status}")
-    lines.append("")
-    lines.append(f"<i>MEXC futures • {tf}</i>")
-    body = "\n".join(lines)
+        rows.append(pad(str(i), w_no) + pad(ticker, w_ticker) + pad(sweep, w_sweep) + pad(status, w_status))
+    table = "\n".join([header, sep] + rows)
+
+    tf = _html_escape(getattr(config, "SWING_TIMEFRAME", "4h"))
+    body = (
+        "🔔 <b>TOP 10 — Sweep SWH/SWL</b>\n\n"
+        "<i>Pairs with confirmed liquidity sweep.</i>\n\n"
+        f"<pre>{_html_escape(table)}</pre>\n\n"
+        f"<i>MEXC futures • {tf}</i>"
+    )
     return _send_raw(body, parse_mode="HTML")

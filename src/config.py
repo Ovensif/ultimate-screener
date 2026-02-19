@@ -46,9 +46,9 @@ def _float(key: str, default: float) -> float:
 MIN_VOLUME = _int("MIN_VOLUME", 300_000)
 # Run sweep check every 10 minutes
 SCAN_INTERVAL = _int("SCAN_INTERVAL", 600)
-# Swing High/Low (Pine Crypto View 1.0 style)
-SWING_PIVOT_LEN = _int("SWING_PIVOT_LEN", 5)
-SWING_LOOKBACK = _int("SWING_LOOKBACK", 30)
+# Swing / liquidity sweep (aec9c8e: pivot left/right bars)
+SWING_PIVOT_LEFT = _int("SWING_PIVOT_LEFT", 7)
+SWING_PIVOT_RIGHT = _int("SWING_PIVOT_RIGHT", 3)
 SWING_TIMEFRAME = os.environ.get("SWING_TIMEFRAME", "4h").strip() or "4h"
 
 # Paths
