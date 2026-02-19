@@ -42,39 +42,20 @@ def _float(key: str, default: float) -> float:
     except ValueError:
         return default
 
-# Watchlist (candidate pool for Alert 10)
-WATCHLIST_REFRESH = _int("WATCHLIST_REFRESH", 3600)
-MIN_VOLUME = _int("MIN_VOLUME", 100_000_000)
-MAX_COINS = _int("MAX_COINS", 20)
-MIN_PRICE_CHANGE = _float("MIN_PRICE_CHANGE", 2.0)
-MAX_SPREAD_PCT = _float("MAX_SPREAD_PCT", 0.1)
-WATCHLIST_ADX_MIN = _float("WATCHLIST_ADX_MIN", 25.0)
-MIN_ATR_PCT = _float("MIN_ATR_PCT", 1.0)
-MAX_ATR_PCT = _float("MAX_ATR_PCT", 8.0)
-# Market analyzer (used by watchlist + Alert 10 screener)
-VOLUME_SPIKE_MULT = _float("VOLUME_SPIKE_MULT", 1.5)
-ADX_STRONG = _float("ADX_STRONG", 35.0)
-
-# Alert 10: sweep-only altcoin list, notify only when list composition changes
-def _bool(key: str, default: bool) -> bool:
-    val = os.environ.get(key, "").strip().lower()
-    if val in ("1", "true", "yes"):
-        return True
-    if val in ("0", "false", "no"):
-        return False
-    return default
-
-ALERT10_ENABLED = _bool("ALERT10_ENABLED", True)
-ALERT10_INTERVAL = _int("ALERT10_INTERVAL", 3600)
-ALERT10_MAX_COINS = _int("ALERT10_MAX_COINS", 10)
-ALERT10_RSI_STRONG = _float("ALERT10_RSI_STRONG", 65.0)   # RSI >= this = strong zone
-ALERT10_RSI_WEAK = _float("ALERT10_RSI_WEAK", 35.0)       # RSI <= this = weak zone
+# Screener: filter pairs by 24h volume (min 300k)
+MIN_VOLUME = _int("MIN_VOLUME", 300_000)
+# Run sweep check every 10 minutes
+SCAN_INTERVAL = _int("SCAN_INTERVAL", 600)
+# Swing High/Low (Pine Crypto View 1.0 style)
+SWING_PIVOT_LEN = _int("SWING_PIVOT_LEN", 5)
+SWING_LOOKBACK = _int("SWING_LOOKBACK", 30)
+SWING_TIMEFRAME = os.environ.get("SWING_TIMEFRAME", "4h").strip() or "4h"
 
 # Paths
 DATA_DIR = PROJECT_ROOT / os.environ.get("DATA_DIR", "data")
 LOGS_DIR = PROJECT_ROOT / os.environ.get("LOGS_DIR", "logs")
 BLACKLIST_PATH = PROJECT_ROOT / "config" / "blacklist.txt"
-ALERT10_LIST_FILE = DATA_DIR / "alert10_list.json"
+TOP10_SWEEP_SENT_FILE = DATA_DIR / "top10_sweep_sent.json"
 
 # Ensure dirs exist
 DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -83,7 +64,7 @@ LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def validate_config() -> None:
-    """Assert required env vars are present. Call at startup."""
+    """Assert required env vars are present (Telegram is used to send sweep alerts)."""
     if not TELEGRAM_BOT_TOKEN:
         raise ValueError("TELEGRAM_BOT_TOKEN is required. Set it in .env or environment.")
     if not TELEGRAM_CHAT_ID:

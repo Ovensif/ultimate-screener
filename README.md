@@ -1,124 +1,83 @@
-# MEXC Alert 10 Bot
+# Ultimate Screener (SWH/SWL)
 
-Bot that sends you a **Top 10 altcoin list** via Telegram when the list changes. Coins are selected from a liquid watchlist and must have:
+Simple bot that:
 
-1. **RSI in strong or weak zone** (RSI ≥ 65 or RSI ≤ 35)
-2. **Confirmed sweep of swing high/low on 4H** (liquidity sweep)
+1. **Filters pairs** by 24h volume ≥ 300,000 (configurable)
+2. **Runs every 10 minutes** (configurable)
+3. **Checks if each pair has already swept** Swing High (SWH) or Swing Low (SWL), using logic from [Pine Script Crypto View 1.0](https://www.tradingview.com/pine-script/) (pivot length 5, lookback 30 bars)
 
-The list is not “top 10 by market cap”—it’s the top 10 that meet these criteria. You get a **single Telegram message** only when the list composition changes (coins in/out).
+Runs **as a Linux systemd service only** (e.g. on a VPS).
 
 ## Features
 
-- **Dynamic watchlist**: Candidate pool by volume, volatility, and trend (refreshed on an interval).
-- **4H-only screening**: RSI strong/weak + confirmed sweep of swing high/low on 4H.
-- **Telegram on change only**: One message when the Top 10 list changes (Out / In / current list).
-- **Configurable**: Intervals, RSI thresholds, and list size via `.env`.
+- **Volume filter**: Only USDT perpetual futures with 24h volume ≥ `MIN_VOLUME` (default 300,000)
+- **SWH/SWL sweep**: Pine-style pivot high/low (length 5), then detect if price has swept those levels within the last 30 bars
+- **Interval**: Scan runs every `SCAN_INTERVAL` seconds (default 600 = 10 minutes)
+- **Telegram**: Sends a Top 10 table to your chat whenever the bot finds pairs that swept SWH/SWL (requires token and chat ID)
 
 ## Requirements
 
+- **Linux** (for systemd service; the process exits on non-Linux)
 - Python 3.9+
-- MEXC (ccxt), Telegram Bot Token and Chat ID
-- `pandas-ta` recommended for full technical analysis (RSI, structure, etc.); fallbacks exist if not installed.
+- MEXC public API (ccxt) — no API keys needed for OHLCV/ticker
 
-## Install
-
-```bash
-cd ultimate-screener
-python -m venv .venv
-.venv\Scripts\activate   # Windows
-# source .venv/bin/activate  # Linux/Mac
-pip install -r requirements.txt
-```
-
-Copy and edit environment:
+## Install (Linux server)
 
 ```bash
-copy config\.env.example .env
-# Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in .env
-```
-
-## Run
-
-From project root:
-
-```bash
-python main.py
-```
-or
-```bash
-python src/main.py
-```
-
-You get a Telegram message: "Scanner started, monitoring N coins". After that, you only receive a message when the **Top 10 list changes** (Out / In / current list).
-
-One-shot (build list once and exit, e.g. for cron):
-
-```bash
-python main.py --once
+cd /opt/ultimate-screener
+cp config/.env.example .env
+# Edit .env: MIN_VOLUME=300000, SCAN_INTERVAL=600; optional Telegram
+bash deployment/install_service.sh /opt/ultimate-screener
 ```
 
 ## Configuration
 
-See `config/.env.example`. Key variables:
-
 | Variable | Description | Default |
 |----------|-------------|---------|
-| TELEGRAM_BOT_TOKEN | Bot token from @BotFather | required |
-| TELEGRAM_CHAT_ID | Chat or group ID for alerts | required |
-| WATCHLIST_REFRESH | Seconds between watchlist refresh | 3600 |
-| ALERT10_INTERVAL | Seconds between Top 10 list runs | 3600 |
-| ALERT10_MAX_COINS | Size of the list sent | 10 |
-| ALERT10_RSI_STRONG | RSI ≥ this = strong zone | 65 |
-| ALERT10_RSI_WEAK | RSI ≤ this = weak zone | 35 |
-| MIN_VOLUME | Min 24h volume (USD) for watchlist | 100000000 |
-| MAX_COINS | Max symbols in watchlist (candidate pool) | 20 |
+| MIN_VOLUME | Min 24h volume (USD) to include a pair | 300000 |
+| SCAN_INTERVAL | Seconds between scans | 600 (10 min) |
+| SWING_PIVOT_LEN | Pivot bars left/right (Pine style) | 5 |
+| SWING_LOOKBACK | Bars after pivot to check for sweep | 30 |
+| SWING_TIMEFRAME | OHLCV timeframe for swing detection | 4h |
+| TELEGRAM_BOT_TOKEN | Telegram bot token (required; sends Top 10 table when sweeps found) | — |
+| TELEGRAM_CHAT_ID | Telegram chat ID (required) | — |
 
-## How often it runs
+## Run
 
-When run as a service (e.g. systemd on a VPS):
-
-- **Watchlist** is refreshed every `WATCHLIST_REFRESH` seconds (default: 1 hour).
-- **Alert 10** (build list, compare, send Telegram if changed) runs every `ALERT10_INTERVAL` seconds (default: 1 hour), plus once at startup.
-
-So by default the bot evaluates the Top 10 list **every hour**. Set `ALERT10_INTERVAL` and `WATCHLIST_REFRESH` in `.env` to change that (values in seconds).
+- **As service (Linux)**: Installed by `install_service.sh`. Use `sudo systemctl start mexc-screener`, `journalctl -u mexc-screener -f`, etc.
+- **One-shot (Linux only)**: `python -u src/main.py --once` — runs one scan and exits (still requires Linux).
 
 ## Project structure
 
 ```
 ultimate-screener/
 ├── src/
-│   ├── main.py              # Orchestrator and scheduler
-│   ├── config.py            # Settings from .env
-│   ├── data_fetcher.py      # MEXC OHLCV, ticker, markets
-│   ├── market_analyzer.py   # Structure, volume, indicators, sweep
-│   ├── alert10_screener.py  # Top 10: RSI + 4H sweep filter
-│   ├── telegram_bot.py      # Startup + Alert 10 list-change messages
-│   └── watchlist_manager.py # Candidate pool for screener
+│   ├── main.py           # Entry: Linux check, scheduler every 10 min
+│   ├── config.py         # MIN_VOLUME, SCAN_INTERVAL, swing params
+│   ├── data_fetcher.py   # MEXC OHLCV, ticker, markets
+│   ├── sweep_screener.py # Volume filter + SWH/SWL sweep (Pine logic)
+│   └── telegram_bot.py   # Optional sweep report
 ├── config/
-│   ├── .env.example
-│   └── blacklist.txt
-├── data/                    # Cache, alert10_list.json
-├── logs/                    # screener.log
-└── tests/
-    └── run_all_tests.py     # MEXC, Telegram, TA, Alert10 screener
+│   └── .env.example
+├── deployment/
+│   ├── install_service.sh   # Linux: venv + systemd
+│   └── mexc-screener.service
+├── data/ and logs/
+└── requirements.txt
 ```
 
-## Tests
+## Swing High / Low (Pine reference)
 
-From project root:
+Logic follows **Crypto View 1.0** Pine script:
 
-```bash
-python tests/run_all_tests.py
-```
-
-Runs: MEXC connection, Telegram (if token set), technical analysis (market_analyzer), Alert10 screener.
+- **Pivot High**: `ta.pivothigh(high, 5, 5)` — bar is a swing high if it’s the max of 5 bars left and 5 bars right
+- **Pivot Low**: `ta.pivotlow(low, 5, 5)`
+- **Swept**: Within 30 bars after the pivot bar, price has gone through the level (high ≥ swing high or low ≤ swing low)
 
 ## Documentation
 
-- [API.md](API.md) – MEXC API usage and rate limits
-- [DEPLOYMENT.md](DEPLOYMENT.md) – Run 24/7 (systemd, cron, Windows)
-- [FAQ.md](FAQ.md) – Troubleshooting
+- [DEPLOYMENT.md](DEPLOYMENT.md) — Install and run as systemd service on Linux
 
 ## Disclaimer
 
-This tool is for education and research. Not financial advice.
+For education and research. Not financial advice.

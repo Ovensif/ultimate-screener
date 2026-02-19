@@ -1,5 +1,5 @@
 [Unit]
-Description=MEXC Futures Signal Screener
+Description=Screener: volume filter + SWH/SWL sweep (Linux service, runs every 10 min)
 After=network.target
 
 [Service]

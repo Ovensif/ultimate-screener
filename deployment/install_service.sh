@@ -1,10 +1,16 @@
 #!/bin/bash
-# Install systemd service for MEXC Futures Screener. Run from project root.
+# Install systemd service for Screener (Linux only).
+# Usage: from project root, ./deployment/install_service.sh [install_dir]
+# Default install_dir=/opt/ultimate-screener
 set -e
+if [ "$(uname -s)" != "Linux" ]; then
+  echo "This service is for Linux only."
+  exit 1
+fi
 PROJECT_DIR="${1:-/opt/ultimate-screener}"
 mkdir -p "$PROJECT_DIR"/{data/cache,logs,config}
 if [ ! -f "$PROJECT_DIR/.env" ]; then
-  echo "Create $PROJECT_DIR/.env from config/.env.example and set TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID"
+  echo "Create $PROJECT_DIR/.env from config/.env.example (MIN_VOLUME, SCAN_INTERVAL, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID)"
   exit 1
 fi
 echo "Setting up virtual environment (venv)..."

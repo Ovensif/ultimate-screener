@@ -1,9 +1,12 @@
 """
-Bot: Top 10 altcoins with RSI strong/weak + 4H sweep. Telegram only when list changes.
+Simple screener: filter pairs by min volume (300k), run every 10 min,
+check if pair already swept Swing High / Swing Low (Pine Crypto View 1.0 logic).
+Runs as a Linux systemd service only.
 """
 import argparse
 import json
 import logging
+import logging.handlers
 import signal as sig
 import sys
 from datetime import datetime, timezone
@@ -14,55 +17,37 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+# Linux only
+if sys.platform != "linux":
+    print("This bot is intended to run as a service on Linux only. Exiting.")
+    sys.exit(1)
+
 from src import config
-from src.alert10_screener import build_alert10_list
 from src.data_fetcher import MEXCDataFetcher
-from src.telegram_bot import send_alert10_list_change, send_startup_message
-from src.watchlist_manager import WatchlistManager
-import logging.handlers
+from src.sweep_screener import get_pairs_by_volume, pairs_that_swept
+from src.telegram_bot import send_top10_sweep_table
 
-# Logging: set up after config is loaded
-def _setup_logging() -> None:
-    config.LOGS_DIR.mkdir(parents=True, exist_ok=True)
-    log_file = config.LOGS_DIR / "screener.log"
-    handler = logging.handlers.RotatingFileHandler(
-        log_file, maxBytes=2 * 1024 * 1024, backupCount=3, encoding="utf-8"
-    )
-    handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
-    logging.root.addHandler(handler)
-    logging.root.setLevel(logging.INFO)
-    console = logging.StreamHandler()
-    console.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
-    logging.root.addHandler(console)
-
-
-# Module-level state for scheduler jobs
 _fetcher: MEXCDataFetcher = None
-_watchlist_manager: WatchlistManager = None
 _shutdown = False
 
 
-def _refresh_watchlist() -> None:
-    _watchlist_manager.refresh()
-
-
-def _load_alert10_list() -> list:
-    """Load previous Alert 10 list from file. Return list of symbols or [] if missing/invalid."""
-    path = getattr(config, "ALERT10_LIST_FILE", config.DATA_DIR / "alert10_list.json")
+def _load_top10_sent() -> set:
+    """Load last sent Top 10 symbols from JSON. Return empty set if missing/invalid."""
+    path = config.TOP10_SWEEP_SENT_FILE
     if not path.exists():
-        return []
+        return set()
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
         symbols = data.get("symbols")
-        return list(symbols) if isinstance(symbols, list) else []
+        return set(symbols) if isinstance(symbols, list) else set()
     except Exception:
-        return []
+        return set()
 
 
-def _save_alert10_list(symbols: list) -> None:
-    """Persist Alert 10 list to file."""
-    path = getattr(config, "ALERT10_LIST_FILE", config.DATA_DIR / "alert10_list.json")
+def _save_top10_sent(symbols: list) -> None:
+    """Save current Top 10 symbols to JSON (only after successful Telegram send)."""
+    path = config.TOP10_SWEEP_SENT_FILE
     try:
         with open(path, "w", encoding="utf-8") as f:
             json.dump(
@@ -71,38 +56,73 @@ def _save_alert10_list(symbols: list) -> None:
                 indent=2,
             )
     except Exception as e:
-        logging.getLogger(__name__).warning("Could not write alert10_list.json: %s", e)
+        logging.getLogger(__name__).warning("Could not write top10_sweep_sent.json: %s", e)
 
 
-def _run_alert10() -> None:
-    """
-    Build Alert 10 list (4H sweep + RSI strong/weak), compare with previous.
-    Send Telegram only when list composition changed; then persist.
-    """
+def _setup_logging() -> None:
+    config.LOGS_DIR.mkdir(parents=True, exist_ok=True)
+    log_file = config.LOGS_DIR / "screener.log"
+    handler = logging.handlers.RotatingFileHandler(
+        log_file, maxBytes=2 * 1024 * 1024, backupCount=3, encoding="utf-8"
+    )
+    handler.setFormatter(
+        logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+    )
+    logging.root.addHandler(handler)
+    logging.root.setLevel(logging.INFO)
+    console = logging.StreamHandler()
+    console.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
+    logging.root.addHandler(console)
+
+
+def _run_scan() -> None:
+    """Get pairs with volume >= MIN_VOLUME, check SWH/SWL sweep, log and optionally notify."""
     logger = logging.getLogger(__name__)
     if _shutdown:
         return
-    watchlist = _watchlist_manager.get_watchlist()
-    if not watchlist:
-        logger.debug("Alert10: watchlist empty, skip")
+    symbols = get_pairs_by_volume(_fetcher, config.MIN_VOLUME)
+    if not symbols:
+        logger.warning("No pairs above min volume %s", config.MIN_VOLUME)
         return
-    current_list = build_alert10_list(watchlist, _fetcher)
-    previous_list = _load_alert10_list()
-    previous_set = set(previous_list)
-    current_set = set(current_list)
-    delisted = sorted(previous_set - current_set)
-    new_coins = sorted(current_set - previous_set)
-    if delisted or new_coins:
-        ok = send_alert10_list_change(delisted, new_coins, current_list)
-        if ok:
-            logger.info("Alert10 list changed: out=%s in=%s", delisted, new_coins)
-    _save_alert10_list(current_list)
+    logger.info("Scanning %d pairs (volume >= %s)", len(symbols), config.MIN_VOLUME)
+    results = pairs_that_swept(
+        symbols,
+        _fetcher,
+        timeframe=config.SWING_TIMEFRAME,
+        limit=100,
+        pivot_len=config.SWING_PIVOT_LEN,
+        swing_lookback=config.SWING_LOOKBACK,
+    )
+    if not results:
+        logger.info("No pairs with SWH/SWL sweep this run")
+        return
+    for r in results:
+        msg = (
+            f"{r.symbol} swept SWH={r.swept_swing_high} SWL={r.swept_swing_low} "
+            f"(SH={r.last_swing_high} SL={r.last_swing_low} close={r.last_close})"
+        )
+        logger.info(msg)
+
+    # Rank: both SWH+SWL first, then volume order; take top 10
+    def _rank_key(item):
+        r, idx = item
+        both = r.swept_swing_high and r.swept_swing_low
+        return (0 if both else 1, -idx)
+    ranked = sorted(enumerate(results), key=_rank_key)
+    top10 = [r for _, r in ranked[:10]]
+
+    if top10:
+        previous = _load_top10_sent()
+        if send_top10_sweep_table(top10, previous):
+            _save_top10_sent([r.symbol for r in top10])
 
 
 def main() -> int:
-    global _fetcher, _watchlist_manager, _shutdown
+    global _fetcher, _shutdown
 
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(
+        description="Screener: volume filter + SWH/SWL sweep check, every 10 min (Linux service)"
+    )
     parser.add_argument("--once", action="store_true", help="Run one scan then exit")
     args = parser.parse_args()
 
@@ -114,23 +134,22 @@ def main() -> int:
 
     _setup_logging()
     logger = logging.getLogger(__name__)
-
     _fetcher = MEXCDataFetcher()
-    _watchlist_manager = WatchlistManager(_fetcher)
-    _watchlist_manager.refresh()
-    watchlist = _watchlist_manager.get_watchlist()
-    send_startup_message(len(watchlist))
 
     if args.once:
-        _run_alert10()
+        _run_scan()
         return 0
 
     from apscheduler.schedulers.blocking import BlockingScheduler
+
     scheduler = BlockingScheduler()
-    scheduler.add_job(_refresh_watchlist, "interval", seconds=config.WATCHLIST_REFRESH, id="watchlist")
-    if getattr(config, "ALERT10_ENABLED", False):
-        scheduler.add_job(_run_alert10, "interval", seconds=config.ALERT10_INTERVAL, id="alert10")
-        _run_alert10()  # run once at startup so first list is persisted and user notified if list exists
+    scheduler.add_job(
+        _run_scan,
+        "interval",
+        seconds=config.SCAN_INTERVAL,
+        id="sweep_scan",
+    )
+    _run_scan()
 
     def _graceful(signum, frame):
         global _shutdown
@@ -139,7 +158,6 @@ def main() -> int:
 
     sig.signal(sig.SIGINT, _graceful)
     sig.signal(sig.SIGTERM, _graceful)
-
     scheduler.start()
     return 0
 
