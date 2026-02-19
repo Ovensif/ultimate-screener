@@ -88,43 +88,31 @@ def send_top10_sweep_table(
     previous_symbols: Set[str],
 ) -> bool:
     """
-    Send one Telegram message: Top 10 table with No | Ticker | Sweep | Status.
-    previous_symbols: set of symbols we already sent before -> Status 🔁, else 🆕.
+    Send one Telegram message: Top 10 list with bold tickers and clear status.
+    previous_symbols: set of symbols we already sent before -> 🔁, else 🆕.
     Returns True if send succeeded.
     """
     if not top10_results:
         return True
 
-    # Column widths for box-drawn table
-    w_no, w_ticker, w_sweep, w_status = 4, 14, 12, 10
-    pad = lambda s, w: (str(s))[:w].ljust(w)
-
-    top = "┌" + "┬".join(["─" * w_no, "─" * w_ticker, "─" * w_sweep, "─" * w_status]) + "┐"
-    mid = "├" + "┼".join(["─" * w_no, "─" * w_ticker, "─" * w_sweep, "─" * w_status]) + "┤"
-    bot = "└" + "┴".join(["─" * w_no, "─" * w_ticker, "─" * w_sweep, "─" * w_status]) + "┘"
-    row = lambda a, b, c, d: "│" + "│".join([pad(a, w_no), pad(b, w_ticker), pad(c, w_sweep), pad(d, w_status)]) + "│"
-
-    header = row(" No ", " Ticker ", " Sweep ", " Status ")
-    rows = []
+    tf = _html_escape(getattr(config, "SWING_TIMEFRAME", "4h"))
+    lines = [
+        "🔔 <b>TOP 10 — Current bar swept nearest SWH/SWL</b>",
+        "",
+        "<i>Only pairs where the last candle broke the nearest swing level.</i>",
+        "",
+    ]
     for i, r in enumerate(top10_results, 1):
-        ticker = symbol_to_display_ticker(r.symbol)
+        ticker = _html_escape(symbol_to_display_ticker(r.symbol))
         if r.swept_swing_high and r.swept_swing_low:
             sweep = "🔼🔽 SH+SL"
         elif r.swept_swing_high:
             sweep = "🔼 SH"
         else:
             sweep = "🔽 SL"
-        status = "🔁 Return" if r.symbol in previous_symbols else "🆕 New"
-        rows.append(row(f" {i} ", f" {ticker} ", f" {sweep} ", f" {status} "))
-    table_lines = [top, header, mid] + rows + [bot]
-    table = "\n".join(table_lines)
-
-    title = "📊 TOP 10 — Just Swept SWH / SWL"
-    subtitle = "Pairs that broke Swing High or Low on the last closed candle"
-    body = (
-        f"<b>{_html_escape(title)}</b>\n"
-        f"<i>{_html_escape(subtitle)}</i>\n\n"
-        f"<pre>{_html_escape(table)}</pre>\n"
-        f"<i>MEXC futures • {_html_escape(getattr(config, 'SWING_TIMEFRAME', '4h'))}</i>"
-    )
+        status = "🔁" if r.symbol in previous_symbols else "🆕"
+        lines.append(f"{i}. <b>{ticker}</b>  {sweep}  {status}")
+    lines.append("")
+    lines.append(f"<i>MEXC futures • {tf}</i>")
+    body = "\n".join(lines)
     return _send_raw(body, parse_mode="HTML")

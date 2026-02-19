@@ -1,7 +1,7 @@
 """
 Swing High / Swing Low sweep detection (Pine Script Crypto View 1.0 style).
 - Pivot High/Low with configurable left/right bars (default 5 like Pine confPivotLen).
-- Sweep = the current bar (last closed candle) has already broken the SWH or SWL level.
+- Notify only when the current bar has swept the nearest SWH or nearest SWL (within lookback).
 """
 import logging
 from dataclasses import dataclass
@@ -85,9 +85,9 @@ def check_sweep(
     swing_lookback: int = DEFAULT_SWING_LOOKBACK,
 ) -> Optional[SweepResult]:
     """
-    Check if the current bar (last closed candle) has already swept Swing High or Swing Low.
-    Only the current bar is considered: its high >= last swing high, or its low <= last swing low.
-    Returns SweepResult or None if insufficient data.
+    Check if the current bar has swept the nearest Swing High or nearest Swing Low only.
+    "Nearest" = the swing (within lookback before current bar) closest to the current bar.
+    Only then we count a sweep and notify. Returns SweepResult or None if insufficient data.
     """
     if df is None or len(df) < pivot_len * 2 + swing_lookback + 5:
         return None
@@ -95,30 +95,29 @@ def check_sweep(
     low = df["low"]
     n = len(df)
 
-    # Most recent pivot high: form at bar (n-1 - pivot_len) in Pine = index (n-1 - pivot_len)
-    # We need a pivot that was confirmed (right bars after it). Last possible pivot index = n-1 - right
     ph_list = pivot_high(high, pivot_len, pivot_len)
     pl_list = pivot_low(low, pivot_len, pivot_len)
     if not ph_list and not pl_list:
         return None
 
-    # Most recent swing high and swing low (by bar index)
-    last_sh_idx, last_sh_price = max(ph_list, key=lambda x: x[0]) if ph_list else (None, None)
-    last_sl_idx, last_sl_price = max(pl_list, key=lambda x: x[0]) if pl_list else (None, None)
-
-    # Current bar = last closed candle (index n-1). Only count sweep when this bar has already swept.
     current_bar = n - 1
+
+    # Nearest swing high: among swing highs before current bar and within lookback, take the one closest to current bar (max index).
+    ph_near = [(idx, p) for (idx, p) in ph_list if idx < current_bar and 0 < current_bar - idx <= swing_lookback]
+    nearest_sh_idx, nearest_sh_price = max(ph_near, key=lambda x: x[0]) if ph_near else (None, None)
+
+    # Nearest swing low: same idea.
+    pl_near = [(idx, p) for (idx, p) in pl_list if idx < current_bar and 0 < current_bar - idx <= swing_lookback]
+    nearest_sl_idx, nearest_sl_price = max(pl_near, key=lambda x: x[0]) if pl_near else (None, None)
+
+    # Only notify when the current bar has swept the nearest SWH or nearest SWL (nothing else).
     swept_high = False
     swept_low = False
-    # Swing high swept: current bar is after the swing and within lookback, and its high >= swing high.
-    if last_sh_idx is not None and last_sh_price is not None:
-        in_range_high = last_sh_idx + 1 <= current_bar <= last_sh_idx + swing_lookback
-        if in_range_high and high.iloc[current_bar] >= last_sh_price:
+    if nearest_sh_idx is not None and nearest_sh_price is not None:
+        if high.iloc[current_bar] >= nearest_sh_price:
             swept_high = True
-    # Swing low swept: current bar is after the swing and within lookback, and its low <= swing low.
-    if last_sl_idx is not None and last_sl_price is not None:
-        in_range_low = last_sl_idx + 1 <= current_bar <= last_sl_idx + swing_lookback
-        if in_range_low and low.iloc[current_bar] <= last_sl_price:
+    if nearest_sl_idx is not None and nearest_sl_price is not None:
+        if low.iloc[current_bar] <= nearest_sl_price:
             swept_low = True
 
     last = df.iloc[-1]
@@ -126,8 +125,8 @@ def check_sweep(
         symbol=symbol,
         swept_swing_high=swept_high,
         swept_swing_low=swept_low,
-        last_swing_high=last_sh_price,
-        last_swing_low=last_sl_price,
+        last_swing_high=nearest_sh_price,
+        last_swing_low=nearest_sl_price,
         last_high=float(last["high"]),
         last_low=float(last["low"]),
         last_close=float(last["close"]),
