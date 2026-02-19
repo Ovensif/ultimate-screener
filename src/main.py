@@ -104,12 +104,15 @@ def _run_scan() -> None:
         logger.info(msg)
 
     # Rank: both SWH+SWL first, then volume order; take top 10
-    def _rank_key(item):
-        idx, r = item  # enumerate gives (index, result)
-        both = r.swept_swing_high and r.swept_swing_low
-        return (0 if both else 1, -idx)
-    ranked = sorted(enumerate(results), key=_rank_key)
-    top10 = [r for _, r in ranked[:10]]
+    indexed = list(enumerate(results))
+    ranked = sorted(
+        indexed,
+        key=lambda item: (
+            0 if (item[1].swept_swing_high and item[1].swept_swing_low) else 1,
+            -item[0],
+        ),
+    )
+    top10 = [item[1] for item in ranked[:10]]
 
     if top10:
         previous = _load_top10_sent()
