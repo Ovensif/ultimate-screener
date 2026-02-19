@@ -114,10 +114,14 @@ def _run_scan() -> None:
     )
     top10 = [item[1] for item in ranked[:10]]
 
+    # Only send notification when there's at least one new pair worth watching (not in previous watchlist)
     if top10:
         previous = _load_top10_sent()
-        if send_top10_sweep_table(top10, previous):
+        has_new = any(r.symbol not in previous for r in top10)
+        if has_new and send_top10_sweep_table(top10, previous):
             _save_top10_sent([r.symbol for r in top10])
+        elif not has_new:
+            logger.info("Top 10 unchanged (no new pairs); skipping notification")
 
 
 def main() -> int:

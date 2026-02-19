@@ -1,7 +1,7 @@
 """
 Swing High / Swing Low sweep detection (Pine Script Crypto View 1.0 style).
 - Pivot High/Low with configurable left/right bars (default 5 like Pine confPivotLen).
-- Check if price has already swept the most recent SWH or SWL within lookback bars.
+- "Just swept": only the most recent bar (last closed candle) broke the SWH or SWL.
 """
 import logging
 from dataclasses import dataclass
@@ -70,8 +70,8 @@ def check_sweep(
     swing_lookback: int = DEFAULT_SWING_LOOKBACK,
 ) -> Optional[SweepResult]:
     """
-    Check if the pair has already swept its most recent Swing High or Swing Low.
-    Uses same logic as Pine: pivot length = 5, lookback = 30 bars.
+    Check if the pair just swept Swing High or Swing Low on the last bar only.
+    Uses same pivot/lookback as Pine; sweep counts only when the last closed candle breaks the level.
     Returns SweepResult or None if insufficient data.
     """
     if df is None or len(df) < pivot_len * 2 + swing_lookback + 5:
@@ -91,25 +91,20 @@ def check_sweep(
     last_sh_idx, last_sh_price = max(ph_list, key=lambda x: x[0]) if ph_list else (None, None)
     last_sl_idx, last_sl_price = max(pl_list, key=lambda x: x[0]) if pl_list else (None, None)
 
-    # Swept: within swing_lookback bars AFTER the swing bar, price went through the level
-    # Pine: swingLowSwept = (bar_index - swingLowBar) <= confSwingBars and low <= lastSwingLow
-    # So we check from (swing_bar + 1) to last bar: did any high >= last_sh_price or low <= last_sl_price?
+    # "Just swept": only the most recent bar (last closed candle) broke the level.
+    # Do not count "already swept" in earlier bars — only sweep on last bar.
+    last_bar = n - 1
     swept_high = False
     swept_low = False
     if last_sh_idx is not None and last_sh_price is not None:
-        start = last_sh_idx + 1
-        end = min(n, last_sh_idx + 1 + swing_lookback)
-        for i in range(start, end):
-            if high.iloc[i] >= last_sh_price:
+        # Last bar must be within lookback after the swing high, and its high must break the level.
+        if last_sh_idx + 1 <= last_bar <= last_sh_idx + swing_lookback:
+            if high.iloc[last_bar] >= last_sh_price:
                 swept_high = True
-                break
     if last_sl_idx is not None and last_sl_price is not None:
-        start = last_sl_idx + 1
-        end = min(n, last_sl_idx + 1 + swing_lookback)
-        for i in range(start, end):
-            if low.iloc[i] <= last_sl_price:
+        if last_sl_idx + 1 <= last_bar <= last_sl_idx + swing_lookback:
+            if low.iloc[last_bar] <= last_sl_price:
                 swept_low = True
-                break
 
     last = df.iloc[-1]
     return SweepResult(
