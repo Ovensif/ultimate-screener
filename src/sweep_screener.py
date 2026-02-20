@@ -80,21 +80,34 @@ def check_sweep(
     symbol: str = "",
     pivot_len: int = CONF_PIVOT_LEN,
     swing_lookback: int = CONF_SWING_BARS,
+    use_closed_bar_only: bool = True,
 ) -> Optional[SweepResult]:
     """
-    Pine Crypto View 1.0 logic: most recent swing high/low, then check if current bar swept.
+    Pine Crypto View 1.0 logic: most recent swing high/low, then check if bar swept.
     swingHighSwept = (bar_index - swingHighBar) <= confSwingBars and high >= lastSwingHigh
     swingLowSwept  = (bar_index - swingLowBar) <= confSwingBars and low <= lastSwingLow
+
+    When use_closed_bar_only is True (default), the sweep is evaluated on the last *closed*
+    candle only. This avoids inconsistent SH/SL results caused by the forming candle's
+    high/low changing between fetches.
     """
     if df is None or len(df) < pivot_len * 2 + swing_lookback + 5:
         return None
     high = df["high"]
     low = df["low"]
     n = len(df)
-    current_bar = n - 1
+    # Use last closed bar for stable results; forming candle changes every fetch
+    if use_closed_bar_only and n >= 2:
+        current_bar = n - 2
+    else:
+        current_bar = n - 1
 
     ph_list = pivot_high(high, pivot_len, pivot_len)
     pl_list = pivot_low(low, pivot_len, pivot_len)
+    # Only use pivots confirmed by current_bar (pivot at i is confirmed at i + pivot_len)
+    max_confirmed_idx = current_bar - pivot_len
+    ph_list = [(i, p) for i, p in ph_list if i <= max_confirmed_idx]
+    pl_list = [(i, p) for i, p in pl_list if i <= max_confirmed_idx]
     if not ph_list and not pl_list:
         return None
 
@@ -124,7 +137,7 @@ def check_sweep(
         signal = "LONG"
         level = last_sl_price
 
-    last = df.iloc[-1]
+    last = df.iloc[current_bar]
     return SweepResult(
         symbol=symbol,
         swept_swing_high=swept_high,
