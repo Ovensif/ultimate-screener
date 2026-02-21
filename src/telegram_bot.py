@@ -94,7 +94,7 @@ def send_top10_sweep_table(
         return True
 
     tf = _html_escape(getattr(config, "SWING_TIMEFRAME", "4h"))
-    w_no, w_ticker, w_signal, w_level, w_status = 3, 12, 10, 12, 6
+    w_no, w_ticker, w_signal, w_level, w_status = 3, 12, 16, 12, 6
     pad = lambda s, w: (str(s))[:w].ljust(w)
 
     header = pad("No", w_no) + pad("Ticker", w_ticker) + pad("Signal", w_signal) + pad("Level", w_level) + pad("Status", w_status)
@@ -103,12 +103,13 @@ def send_top10_sweep_table(
     for i, r in enumerate(top10_results, 1):
         ticker = symbol_to_display_ticker(r.symbol)
         sig = r.signal if hasattr(r, "signal") else ("BOTH" if (r.swept_swing_high and r.swept_swing_low) else ("SHORT" if r.swept_swing_high else "LONG"))
+        dev_tf = getattr(r, "deviation_tf", None)
         if sig == "LONG":
-            signal_str = "▲ LONG"
+            signal_str = "▲ LONG" + (f" ({dev_tf})" if dev_tf else "")
         elif sig == "SHORT":
-            signal_str = "▼ SHORT"
+            signal_str = "▼ SHORT" + (f" ({dev_tf})" if dev_tf else "")
         else:
-            signal_str = "▲▼ BOTH"
+            signal_str = "▲▼ BOTH" + (f" ({dev_tf})" if dev_tf else "")
         level_str = _fmt_level(getattr(r, "level", None))
         status = "🔁" if r.symbol in previous_symbols else "🆕"
         rows.append(pad(str(i), w_no) + pad(ticker, w_ticker) + pad(signal_str, w_signal) + pad(level_str, w_level) + pad(status, w_status))
@@ -116,9 +117,9 @@ def send_top10_sweep_table(
 
     body = (
         "📊 <b>Crypto View — Top 10 Sweep Alerts</b>\n"
-        f"<i>{tf} • SWH/SWL swept this bar</i>\n\n"
-        "<i>Check charts for deviation / continuation. Level = key price swept.</i>\n\n"
+        f"<i>{tf} sweep + deviation (4 bars back, 4H/1H)</i>\n\n"
+        "<i>Check charts for deviation / continuation. Level = key price. (4h/1h) = deviation candle source.</i>\n\n"
         f"<pre>{_html_escape(table)}</pre>\n\n"
-        f"<i>MEXC futures • Scan every {getattr(config, 'SCAN_INTERVAL', 600) // 60} min</i>"
+        f"<i>MEXC futures • Scan every {getattr(config, 'SCAN_INTERVAL', 3600) // 60} min</i>"
     )
     return _send_raw(body, parse_mode="HTML")

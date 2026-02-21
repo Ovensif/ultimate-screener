@@ -44,12 +44,16 @@ def _float(key: str, default: float) -> float:
 
 # Screener: filter pairs by 24h volume (min 300k)
 MIN_VOLUME = _int("MIN_VOLUME", 300_000)
-# Run sweep check every 10 minutes
-SCAN_INTERVAL = _int("SCAN_INTERVAL", 600)
+# Run scan every 1 hour (3600); set SCAN_INTERVAL in .env to override
+SCAN_INTERVAL = _int("SCAN_INTERVAL", 3600)
 # Swing (Crypto View 1.0: confPivotLen, confSwingBars)
 SWING_PIVOT_LEN = _int("SWING_PIVOT_LEN", 5)
 SWING_LOOKBACK = _int("SWING_LOOKBACK", 30)
 SWING_TIMEFRAME = os.environ.get("SWING_TIMEFRAME", "4h").strip() or "4h"
+
+# Deviation (Crypto View V3.0): look back 4 bars for deviation candle on 4H/1H only
+DEV_LOOKBACK_BARS = _int("DEV_LOOKBACK_BARS", 4)
+DEV_TIMEFRAMES = ("4h", "1h")  # only these timeframes for deviation
 
 # Paths
 DATA_DIR = PROJECT_ROOT / os.environ.get("DATA_DIR", "data")

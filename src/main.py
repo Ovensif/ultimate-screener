@@ -1,7 +1,8 @@
 """
-Simple screener: filter pairs by min volume (300k), run every 10 min,
-check if pair already swept Swing High / Swing Low (Pine Crypto View 1.0 logic).
-Runs as a Linux systemd service only.
+Crypto View screener: filter by min volume, run every 1 hour.
+Grading list: (1) pairs that swept SWH/SWL this bar, (2) pairs with a deviation
+candle in the last 4 bars (4H/1H only) whose high/low was already swept.
+Only new candidates in top 10 trigger Telegram. Runs as a Linux systemd service.
 """
 import argparse
 import json
@@ -24,7 +25,11 @@ if sys.platform != "linux":
 
 from src import config
 from src.data_fetcher import MEXCDataFetcher
-from src.sweep_screener import get_pairs_by_volume, pairs_that_swept
+from src.sweep_screener import (
+    get_pairs_by_volume,
+    pairs_that_swept,
+    pairs_with_deviation_swept,
+)
 from src.telegram_bot import send_top10_sweep_table
 
 _fetcher: MEXCDataFetcher = None
@@ -76,7 +81,12 @@ def _setup_logging() -> None:
 
 
 def _run_scan() -> None:
-    """Get pairs with volume >= MIN_VOLUME, check SWH/SWL sweep, log and optionally notify."""
+    """
+    Get pairs with volume >= MIN_VOLUME; build grading list from:
+    1) Current bar SWH/SWL sweep (existing logic)
+    2) Deviation candle in last 4 bars (4H/1H only) whose high/low was already swept.
+    Rank, take top 10; send Telegram only if at least one new candidate (same as before).
+    """
     logger = logging.getLogger(__name__)
     if _shutdown:
         return
@@ -85,7 +95,9 @@ def _run_scan() -> None:
         logger.warning("No pairs above min volume %s", config.MIN_VOLUME)
         return
     logger.info("Scanning %d pairs (volume >= %s)", len(symbols), config.MIN_VOLUME)
-    results = pairs_that_swept(
+
+    # 1) Current bar sweep (SWH/SWL)
+    sweep_results = pairs_that_swept(
         symbols,
         _fetcher,
         timeframe=config.SWING_TIMEFRAME,
@@ -93,17 +105,40 @@ def _run_scan() -> None:
         pivot_len=config.SWING_PIVOT_LEN,
         swing_lookback=config.SWING_LOOKBACK,
     )
+    # 2) Deviation candle in last 4 bars on 4H/1H with level already swept
+    deviation_results = pairs_with_deviation_swept(
+        symbols,
+        _fetcher,
+        timeframes=config.DEV_TIMEFRAMES,
+        lookback_bars=config.DEV_LOOKBACK_BARS,
+        limit=100,
+        pivot_len=config.SWING_PIVOT_LEN,
+        swing_lookback=config.SWING_LOOKBACK,
+    )
+
+    # Merge into grading list: sweep first, then deviation; dedupe by symbol (keep sweep if both)
+    seen = set()
+    results: list = []
+    for r in sweep_results:
+        seen.add(r.symbol)
+        results.append(r)
+    for r in deviation_results:
+        if r.symbol not in seen:
+            seen.add(r.symbol)
+            results.append(r)
+
     if not results:
-        logger.info("No pairs with SWH/SWL sweep this run")
+        logger.info("No pairs in grading list this run (sweep or deviation)")
         return
     for r in results:
+        src = f" dev[{r.deviation_tf}]" if getattr(r, "deviation_tf", None) else " sweep"
         msg = (
-            f"{r.symbol} swept SWH={r.swept_swing_high} SWL={r.swept_swing_low} "
+            f"{r.symbol}{src} SWH={r.swept_swing_high} SWL={r.swept_swing_low} "
             f"(SH={r.last_swing_high} SL={r.last_swing_low} close={r.last_close})"
         )
         logger.info(msg)
 
-    # Rank: both SWH+SWL first, then volume order; take top 10
+    # Rank: both SWH+SWL first, then by order; take top 10
     indexed = list(enumerate(results))
     ranked = sorted(
         indexed,
@@ -114,7 +149,7 @@ def _run_scan() -> None:
     )
     top10 = [item[1] for item in ranked[:10]]
 
-    # Only send notification when there's at least one new pair worth watching (not in previous watchlist)
+    # Only send when at least one new pair (not in previous watchlist)
     if top10:
         previous = _load_top10_sent()
         has_new = any(r.symbol not in previous for r in top10)
@@ -128,7 +163,7 @@ def main() -> int:
     global _fetcher, _shutdown
 
     parser = argparse.ArgumentParser(
-        description="Screener: volume filter + SWH/SWL sweep check, every 10 min (Linux service)"
+        description="Screener: volume filter + sweep + deviation (4 bars, 4H/1H), every 1h (Linux service)"
     )
     parser.add_argument("--once", action="store_true", help="Run one scan then exit")
     args = parser.parse_args()
